@@ -175,7 +175,7 @@ function renderCam(camId) {
 }
 
 function disconnectedHTML(config, camId) {
-  const hasIp = Boolean(config.ip);
+  const msg = config.ip ? `Not connected · ${config.ip}` : 'No camera configured';
   return `
     <div class="cam-placeholder">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -183,7 +183,7 @@ function disconnectedHTML(config, camId) {
         <path d="M4 8l2-2h12l2 2v8l-2 2H6l-2-2V8z"/>
         <line x1="3" y1="3" x2="21" y2="21" stroke-width="1.5"/>
       </svg>
-      <p>${hasIp ? `Connecting to ${config.ip}…` : 'No camera configured'}</p>
+      <p>${msg}</p>
       <button class="btn btn-primary btn-connect-panel" data-action="connect" data-camid="${camId}">
         Connect
       </button>
@@ -465,15 +465,7 @@ function panelShellHTML(camId) {
         </button>
       </div>
     </div>
-    <div class="cam-body">
-      <div class="cam-placeholder">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M4 8l2-2h12l2 2v8l-2 2H6l-2-2V8z"/>
-        </svg>
-        <p>Click <strong>⚙</strong> to configure</p>
-      </div>
-    </div>
+    <div class="cam-body"></div>
   `;
 }
 
@@ -518,6 +510,8 @@ function init() {
   });
 
   buildPanels();
+  // Populate every panel body immediately (shows Connect button for unconfigured slots)
+  CAM_IDS.forEach((id) => renderCam(id));
   updateGridLayout();
 
   // Modal events
