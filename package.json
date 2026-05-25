@@ -1,0 +1,22 @@
+{
+  "name": "canon-browser-remote-dashboard",
+  "version": "1.0.0",
+  "description": "Multi-camera dashboard for Canon XF series cameras via the Browser Remote API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "GPL-3.0"
+}

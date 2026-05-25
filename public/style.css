@@ -1,0 +1,501 @@
+/* ============================================================
+   Canon Remote Dashboard – Stylesheet
+   SPDX-License-Identifier: GPL-3.0-or-later
+   ============================================================ */
+
+/* ── Custom properties ─────────────────────────────────────── */
+:root {
+  --bg:           #0d0d0f;
+  --surface:      #16161a;
+  --surface-2:    #1e1e24;
+  --surface-3:    #26262e;
+  --border:       #2e2e38;
+  --text:         #e8e8f0;
+  --text-muted:   #6b6b80;
+  --text-dim:     #9090a8;
+  --accent:       #4f8ef7;
+  --accent-dim:   #2b4f8f;
+  --red:          #f74f4f;
+  --red-dim:      #8f2b2b;
+  --green:        #4fbe96;
+  --amber:        #f7a94f;
+  --radius:       10px;
+  --radius-sm:    6px;
+  --header-h:     52px;
+  --shadow:       0 4px 24px rgba(0,0,0,.5);
+  --rec-pulse:    pulse-rec 1.4s ease-in-out infinite;
+}
+
+/* ── Reset ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── App header ────────────────────────────────────────────── */
+.app-header {
+  height: var(--header-h);
+  min-height: var(--header-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  gap: 12px;
+  z-index: 10;
+}
+
+.app-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: .01em;
+  color: var(--text);
+}
+
+.logo-icon {
+  width: 22px; height: 22px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.header-controls { display: flex; gap: 8px; align-items: center; }
+
+/* ── Camera grid ───────────────────────────────────────────── */
+.grid {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  min-height: 0;
+  overflow: hidden;
+  /* default: 2×2 */
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* Responsive overrides */
+@media (max-width: 700px) {
+  .grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(4, 1fr);
+    overflow-y: auto;
+  }
+  body { overflow: auto; }
+}
+
+@media (min-width: 701px) and (max-width: 1100px) {
+  /* 2 columns, let rows scroll if needed */
+}
+
+/* Active-camera layout variants */
+.grid[data-active="1"] {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+.grid[data-active="2"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+.grid[data-active="3"] {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+/* cam-3 spans both columns in bottom row */
+.grid[data-active="3"] .cam-panel:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+/* ── Camera panel ──────────────────────────────────────────── */
+.cam-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  transition: border-color .2s;
+}
+
+.cam-panel.is-recording { border-color: var(--red); }
+.cam-panel.is-disconnected { opacity: .6; }
+
+/* ── Panel header ──────────────────────────────────────────── */
+.cam-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cam-name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cam-ip {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.cam-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Connection status dot */
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.status-dot.connected    { background: var(--green); }
+.status-dot.disconnected { background: var(--red-dim); }
+.status-dot.connecting   { background: var(--amber); animation: pulse-dot 1s ease-in-out infinite; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .3; }
+}
+
+/* ── Panel body ────────────────────────────────────────────── */
+.cam-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+}
+
+/* Unconnected placeholder */
+.cam-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 24px;
+}
+.cam-placeholder svg { width: 40px; height: 40px; opacity: .3; }
+.cam-placeholder p { font-size: 13px; }
+
+/* ── Status strip (REC + TC + Battery) ─────────────────────── */
+.status-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.rec-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  transition: background .2s, color .2s;
+}
+.rec-badge .rec-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.rec-badge.is-recording {
+  background: var(--red);
+  color: #fff;
+}
+.rec-badge.is-recording .rec-dot {
+  background: #fff;
+  animation: var(--rec-pulse);
+}
+
+@keyframes pulse-rec {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .2; }
+}
+
+.tc-display {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 13px;
+  letter-spacing: .04em;
+  color: var(--text-dim);
+}
+
+.battery-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+.battery-badge.low { color: var(--amber); }
+.battery-badge.critical { color: var(--red); }
+
+/* ── SD card row ───────────────────────────────────────────── */
+.sdcard-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.sdcard-badge {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.sdcard-badge .sd-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: 2px;
+}
+.sdcard-badge .sd-remain { color: var(--text-dim); }
+.sdcard-badge.active-slot { border-color: var(--accent); }
+.sdcard-badge.sd-full .sd-remain { color: var(--amber); }
+.sdcard-badge.sd-empty .sd-remain { color: var(--text-muted); }
+
+/* ── Settings grid ─────────────────────────────────────────── */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.setting-cell {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+.setting-cell .s-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.setting-cell .s-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Controls bar ──────────────────────────────────────────── */
+.controls-section {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.controls-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ctrl-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  min-width: 32px;
+}
+
+/* ── Buttons ───────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .15s, color .15s, border-color .15s, transform .08s;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  background: var(--surface-3);
+  color: var(--text);
+}
+.btn:hover  { background: var(--border); }
+.btn:active { transform: scale(.96); }
+
+.btn-sm   { padding: 4px 8px; font-size: 11px; }
+.btn-xs   { padding: 3px 7px; font-size: 11px; }
+.btn-icon { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 4px; display: inline-flex; align-items: center; }
+.btn-icon:hover { color: var(--text); background: var(--surface-3); }
+.btn-icon svg { width: 16px; height: 16px; }
+
+.btn-primary  { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover { background: #3a7df0; }
+
+.btn-outline  { background: transparent; border-color: var(--border); color: var(--text-dim); }
+.btn-outline:hover { border-color: var(--text-muted); color: var(--text); }
+
+.btn-outline svg { width: 15px; height: 15px; }
+
+.btn-ghost  { background: transparent; border: none; color: var(--text-muted); }
+.btn-ghost:hover { color: var(--text); background: var(--surface-3); }
+
+.btn-record {
+  padding: 6px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  background: var(--surface-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-record:hover { border-color: var(--red); color: var(--red); }
+.btn-record.is-recording {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+  animation: var(--rec-pulse);
+}
+.btn-record.is-recording:hover {
+  background: #c43a3a;
+  animation: none;
+}
+
+/* nudge buttons (iris, zoom, focus) */
+.nudge-pair {
+  display: inline-flex;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.nudge-pair .btn {
+  border-radius: 0;
+  border: none;
+  padding: 4px 10px;
+  font-size: 14px;
+  min-width: 32px;
+  background: var(--surface-3);
+}
+.nudge-pair .btn:first-child { border-right: 1px solid var(--border); }
+.nudge-pair .btn:hover { background: var(--border); }
+
+/* ── Modal ─────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+}
+.modal-backdrop[hidden] { display: none; }
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: var(--shadow);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h2 { font-size: 15px; font-weight: 700; }
+
+.modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+
+.form-group { display: flex; flex-direction: column; gap: 5px; }
+.form-group label { font-size: 12px; color: var(--text-dim); font-weight: 500; }
+.form-group input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color .15s;
+}
+.form-group input:focus { border-color: var(--accent); }
+.form-group input::placeholder { color: var(--text-muted); }
+
+.modal-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Responsive tweaks ─────────────────────────────────────── */
+@media (max-width: 900px) {
+  .settings-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 500px) {
+  .settings-grid { grid-template-columns: 1fr 1fr; }
+  .cam-header { padding: 6px 10px; }
+  .cam-body { padding: 8px 10px; }
+}
