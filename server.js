@@ -1,8 +1,9 @@
 /**
  * Canon Browser Remote Dashboard – Backend Proxy Server
  *
- * Proxies HTTP requests to Canon XF cameras, managing per-camera
- * authentication sessions and broadcasting status updates via WebSocket.
+ * Acts as a single authenticated proxy to Canon XF/C-series cameras,
+ * managing sessions so the dashboard and Bitfocus Companion can share
+ * camera access without session conflicts.
  *
  * Copyright (C) 2024  Chris Whitehouse
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -11,51 +12,45 @@
 'use strict';
 
 const express = require('express');
-const http = require('http');
+const http    = require('http');
 const WebSocket = require('ws');
-const fetch = require('node-fetch');
-const path = require('path');
+const fetch   = require('node-fetch');
+const path    = require('path');
 
-const app = express();
+const app    = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const wss    = new WebSocket.Server({ server });
 
-const PORT = process.env.PORT || 3000;
-const POLL_INTERVAL_MS = 1000;
+const PORT            = process.env.PORT || 8847;
+const POLL_INTERVAL   = 1000;   // ms between status polls
+const LOGIN_SETTLE_MS = 600;    // ms to wait after login before first poll
 
-// ─── In-memory camera state ──────────────────────────────────────────────────
+// ─── Protocol registry ────────────────────────────────────────────────────────
+// Groundwork for future XC protocol support.
+// Each entry describes how to connect/poll/command a camera type.
+//
+// 'browserremote' – Canon XF/C-series Browser Remote HTTP API  (implemented)
+// 'xcprotocol'    – Canon XC-series UDP/TCP control protocol   (future)
+const PROTOCOLS = {
+  browserremote: { label: 'XF / C Series (Browser Remote)', implemented: true  },
+  xcprotocol:    { label: 'XC Series (XC Protocol)',         implemented: false },
+};
 
-/** @type {Map<string, CameraSession>} keyed by cameraId ("cam1"–"cam4") */
+// ─── Session state ────────────────────────────────────────────────────────────
+
+/** @type {Map<string, CameraSession>} */
 const cameras = new Map();
-
-/**
- * @typedef {Object} CameraConfig
- * @property {string} id        - "cam1" | "cam2" | "cam3" | "cam4"
- * @property {string} label     - User-defined name
- * @property {string} ip        - Camera IP address
- * @property {string} username  - Login username
- * @property {string} password  - Login password
- * @property {boolean} enabled  - Whether this slot is active
- */
-
-/**
- * @typedef {Object} CameraSession
- * @property {CameraConfig} config
- * @property {string|null}  cookie      - Raw Set-Cookie string from login
- * @property {boolean}      connected
- * @property {Object}       status      - Latest parsed status data
- * @property {ReturnType<typeof setInterval>|null} pollTimer
- * @property {boolean}      polling
- */
 
 function createSession(config) {
   return {
     config,
-    cookie: null,
-    connected: false,
-    status: {},
-    pollTimer: null,
-    polling: false,
+    cookie:         null,
+    connected:      false,
+    status:         {},
+    pollTimer:      null,
+    seq:            0,         // sequence counter for poll requests
+    statusEndpoint: null,      // discovered dynamically per firmware
+    _debugLogged:   false,
   };
 }
 
@@ -63,179 +58,197 @@ function createSession(config) {
 
 function broadcast(payload) {
   const msg = JSON.stringify(payload);
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(msg);
-    }
+  wss.clients.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
 }
 
 function broadcastStatus(camId) {
-  const session = cameras.get(camId);
-  if (!session) return;
+  const s = cameras.get(camId);
+  if (!s) return;
   broadcast({
-    type: 'status',
+    type:      'status',
     camId,
-    connected: session.connected,
-    status: session.status,
-    label: session.config.label,
-    ip: session.config.ip,
+    connected: s.connected,
+    status:    s.status,
+    label:     s.config.label,
+    ip:        s.config.ip,
+    protocol:  s.config.protocol,
   });
 }
 
-function broadcastAllStatus() {
-  cameras.forEach((_, camId) => broadcastStatus(camId));
-}
-
-// ─── Camera API helpers ───────────────────────────────────────────────────────
+// ─── Browser Remote API helpers ───────────────────────────────────────────────
 
 function baseUrl(config) {
   return `http://${config.ip}`;
 }
 
-/**
- * Build headers for every camera request.
- * Canon XF web server requires HTTP Basic Auth on all endpoints.
- * Session cookie is appended when available (some firmware needs it).
- */
 function cameraHeaders(session) {
   const { config } = session;
   const cred = Buffer.from(`${config.username}:${config.password}`).toString('base64');
-  const headers = { Authorization: `Basic ${cred}` };
-  if (session.cookie) headers.Cookie = session.cookie;
-  return headers;
+  const h = { Authorization: `Basic ${cred}` };
+  if (session.cookie) h.Cookie = session.cookie;
+  return h;
 }
 
 /**
- * Login to a camera.
- * Sends Basic Auth + query-string credentials to /api/acnt/login,
- * then stores any session cookie returned for subsequent requests.
+ * Login.  Attempts logout first to clear any stale session (errsession).
  */
 async function login(session) {
   const { config } = session;
-  const url = `${baseUrl(config)}/api/acnt/login?uname=${encodeURIComponent(config.username)}&pw=${encodeURIComponent(config.password)}`;
+
+  // Clear any existing session to avoid errsession
   try {
-    const res = await fetch(url, {
+    await fetch(`${baseUrl(config)}/api/acnt/logout`, {
       headers: cameraHeaders(session),
-      timeout: 5000,
+      timeout: 2000,
     });
+    await new Promise(r => setTimeout(r, 200));
+  } catch (_) {}
+
+  const url = `${baseUrl(config)}/api/acnt/login`
+    + `?uname=${encodeURIComponent(config.username)}`
+    + `&pw=${encodeURIComponent(config.password)}`;
+
+  try {
+    const res = await fetch(url, { headers: cameraHeaders(session), timeout: 5000 });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const data = await res.json();
     if (data.res !== 'ok') throw new Error(`Login rejected: ${data.res}`);
 
-    // Store session cookie if the camera issues one
     const rawCookies = res.headers.raw()['set-cookie'] || [];
     if (rawCookies.length) {
-      session.cookie = rawCookies.map((c) => c.split(';')[0]).join('; ');
+      session.cookie = rawCookies.map(c => c.split(';')[0]).join('; ');
     }
     session.connected = true;
-    console.log(`[${config.id}] Logged in to ${config.ip}`);
+    console.log(`[${config.id}] ✓ Logged in to ${config.ip}`);
     return true;
   } catch (err) {
     console.warn(`[${config.id}] Login failed: ${err.message}`);
     session.connected = false;
-    session.cookie = null;
+    session.cookie    = null;
     return false;
   }
 }
 
 /**
- * Fetch camera status via /api/cam/getcurprop
+ * Poll camera status.  Tries multiple endpoint patterns so it works
+ * across XF705, XF405, C200, C100mk2 and similar firmware variants.
  */
 async function fetchStatus(session) {
   const { config } = session;
-  const url = `${baseUrl(config)}/api/cam/getcurprop`;
-  try {
-    const res = await fetch(url, {
-      headers: cameraHeaders(session),
-      timeout: 4000,
-    });
 
-    if (res.status === 401 || res.status === 403) {
-      console.log(`[${config.id}] Auth rejected, re-logging in…`);
-      session.connected = false;
-      session.cookie = null;
-      await login(session);
-      return;
-    }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  // Endpoint candidates — tried in order until one succeeds
+  const candidates = session.statusEndpoint
+    ? [session.statusEndpoint]
+    : [
+        `/api/cam/getcurprop`,
+        `/api/cam/getcurprop?seq=${session.seq}`,
+        `/api/cam/getprop`,
+        `/api/cam/getprop?seq=${session.seq}`,
+      ];
 
-    const data = await res.json();
-
-    if (data.res === 'errsession') {
-      session.connected = false;
-      session.cookie = null;
-      await login(session);
-      return;
-    }
-
-    // Log raw response once per camera for debugging
-    if (!session._debugLogged) {
-      console.log(`[${config.id}] Raw getcurprop:`, JSON.stringify(data).slice(0, 800));
-      session._debugLogged = true;
-    }
-
-    // Flatten the property list into a simple key→value map
-    const flat = {};
-    if (Array.isArray(data.prop)) {
-      data.prop.forEach((p) => {
-        if (p.k !== undefined) flat[p.k] = p.v;
+  for (const endpoint of candidates) {
+    const url = `${baseUrl(config)}${endpoint}`;
+    try {
+      const res = await fetch(url, {
+        headers: cameraHeaders(session),
+        timeout: 4000,
       });
-    } else if (typeof data === 'object') {
-      Object.assign(flat, data);
-    }
 
-    session.status = flat;
-    session.connected = true;
-    broadcastStatus(config.id);
-  } catch (err) {
-    console.warn(`[${config.id}] Status poll failed: ${err.message}`);
-    session.connected = false;
-    broadcastStatus(config.id);
+      if (res.status === 401 || res.status === 403) {
+        console.log(`[${config.id}] Session expired – re-logging in`);
+        session.connected = false;
+        session.cookie    = null;
+        session.statusEndpoint = null;
+        await login(session);
+        return;
+      }
+      if (!res.ok) continue;
+
+      const data = await res.json();
+
+      if (data.res === 'errsession') {
+        session.connected = false;
+        session.cookie    = null;
+        session.statusEndpoint = null;
+        await login(session);
+        return;
+      }
+
+      if (data.res === 'failparam') {
+        console.log(`[${config.id}] ${endpoint} → failparam, trying next…`);
+        continue;
+      }
+
+      // First success — record which endpoint works for this camera
+      if (!session._debugLogged) {
+        session.statusEndpoint = endpoint;
+        console.log(`[${config.id}] Status endpoint: ${endpoint}`);
+        console.log(`[${config.id}] Raw sample:`, JSON.stringify(data).slice(0, 600));
+        session._debugLogged = true;
+      }
+
+      // Flatten prop array or flat object into key→value map
+      const flat = {};
+      if (Array.isArray(data.prop)) {
+        data.prop.forEach(p => { if (p.k != null) flat[p.k] = p.v; });
+      } else if (typeof data === 'object') {
+        Object.assign(flat, data);
+      }
+
+      session.status    = flat;
+      session.connected = true;
+      session.seq++;
+      broadcastStatus(config.id);
+      return; // success – don't try further candidates
+
+    } catch (err) {
+      console.warn(`[${config.id}] Poll ${endpoint}: ${err.message}`);
+    }
   }
+
+  // All candidates failed
+  session.connected = false;
+  broadcastStatus(config.id);
 }
 
-/**
- * Send a control command to the camera.
- * cmd example: "rec?cmd=trig"  or  "drivelens?iris=plus"
- */
 async function sendCommand(session, cmd) {
-  const { config } = session;
-  if (!session.connected) {
-    throw new Error('Camera not connected');
-  }
-  const url = `${baseUrl(config)}/api/cam/${cmd}`;
-  const res = await fetch(url, {
-    headers: cameraHeaders(session),
-    timeout: 5000,
-  });
+  if (!session.connected) throw new Error('Camera not connected');
+  const url = `${baseUrl(session.config)}/api/cam/${cmd}`;
+  const res = await fetch(url, { headers: cameraHeaders(session), timeout: 5000 });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
 // ─── Polling lifecycle ────────────────────────────────────────────────────────
 
-function startPolling(session) {
+async function startPolling(session) {
   if (session.pollTimer) return;
-  session.polling = true;
-  session.pollTimer = setInterval(() => fetchStatus(session), POLL_INTERVAL_MS);
-  // Kick off immediately
+  // Brief delay so the camera session settles after login
+  await new Promise(r => setTimeout(r, LOGIN_SETTLE_MS));
+  if (!session.polling) return; // disconnected while waiting
+  session.polling  = true;
+  session.pollTimer = setInterval(() => fetchStatus(session), POLL_INTERVAL);
   fetchStatus(session);
 }
 
 function stopPolling(session) {
-  if (session.pollTimer) {
-    clearInterval(session.pollTimer);
-    session.pollTimer = null;
-  }
-  session.polling = false;
+  clearInterval(session.pollTimer);
+  session.pollTimer = null;
+  session.polling   = false;
 }
 
 async function connectCamera(camId, config) {
-  // Stop any existing session for this slot
-  if (cameras.has(camId)) {
-    stopPolling(cameras.get(camId));
+  // Tear down any existing session for this slot
+  if (cameras.has(camId)) stopPolling(cameras.get(camId));
+
+  // XC Protocol – groundwork only, not yet implemented
+  if (config.protocol === 'xcprotocol') {
+    console.log(`[${camId}] XC Protocol selected – not yet implemented`);
+    broadcast({ type: 'error', camId, error: 'XC Protocol is not yet implemented' });
+    return;
   }
 
   const session = createSession(config);
@@ -266,101 +279,147 @@ function disconnectCamera(camId) {
   if (!cameras.has(camId)) return;
   const session = cameras.get(camId);
   stopPolling(session);
+  // Attempt polite logout
+  try {
+    fetch(`${baseUrl(session.config)}/api/acnt/logout`, {
+      headers: cameraHeaders(session),
+      timeout: 2000,
+    }).catch(() => {});
+  } catch (_) {}
   session.connected = false;
-  session.cookie = null;
+  session.cookie    = null;
   cameras.delete(camId);
   broadcast({ type: 'disconnected', camId });
 }
 
-// ─── Express routes ───────────────────────────────────────────────────────────
+// ─── HTTP API ─────────────────────────────────────────────────────────────────
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-/** POST /api/connect  { camId, label, ip, username, password } */
+/** POST /api/connect */
 app.post('/api/connect', async (req, res) => {
-  const { camId, label, ip, username, password } = req.body;
+  const { camId, label, ip, username, password, protocol } = req.body;
   if (!camId || !ip) return res.status(400).json({ error: 'camId and ip required' });
 
-  const config = {
-    id: camId,
-    label: label || camId,
+  await connectCamera(camId, {
+    id:       camId,
+    label:    label    || camId,
     ip,
     username: username || 'Full',
     password: password || '12345678',
-    enabled: true,
-  };
-
-  await connectCamera(camId, config);
+    protocol: protocol || 'browserremote',
+  });
   res.json({ ok: true });
 });
 
-/** POST /api/disconnect  { camId } */
+/** POST /api/disconnect */
 app.post('/api/disconnect', (req, res) => {
-  const { camId } = req.body;
-  disconnectCamera(camId);
+  disconnectCamera(req.body.camId);
   res.json({ ok: true });
 });
 
-/** POST /api/command  { camId, cmd }  e.g. cmd="rec?cmd=trig" */
+/** POST /api/command  { camId, cmd } */
 app.post('/api/command', async (req, res) => {
   const { camId, cmd } = req.body;
   const session = cameras.get(camId);
   if (!session) return res.status(404).json({ error: 'Camera not found' });
-
   try {
-    const data = await sendCommand(session, cmd);
-    res.json(data);
+    res.json(await sendCommand(session, cmd));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-/** GET /api/rawstatus/:camId  – raw getcurprop response for debugging */
+/** GET /api/status */
+app.get('/api/status', (req, res) => {
+  const result = {};
+  cameras.forEach((s, camId) => {
+    result[camId] = { connected: s.connected, label: s.config.label, ip: s.config.ip, status: s.status };
+  });
+  res.json(result);
+});
+
+/** GET /api/rawstatus/:camId – raw getcurprop for debugging */
 app.get('/api/rawstatus/:camId', async (req, res) => {
   const session = cameras.get(req.params.camId);
   if (!session) return res.status(404).json({ error: 'Camera not found' });
   try {
-    const url = `${baseUrl(session.config)}/api/cam/getcurprop`;
-    const r = await fetch(url, { headers: cameraHeaders(session), timeout: 4000 });
-    const data = await r.json();
-    res.json(data);
+    const r = await fetch(`${baseUrl(session.config)}/api/cam/getcurprop`, {
+      headers: cameraHeaders(session), timeout: 4000,
+    });
+    res.json(await r.json());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-/** GET /api/status  – snapshot of all camera states */
-app.get('/api/status', (req, res) => {
+/** GET /api/protocols – list supported protocols */
+app.get('/api/protocols', (req, res) => res.json(PROTOCOLS));
+
+// ─── Companion API ────────────────────────────────────────────────────────────
+// These endpoints let Bitfocus Companion control cameras through this
+// dashboard so only one session per camera is ever open.
+//
+// Use Companion's built-in HTTP Request module pointing at:
+//   http://<dashboard-host>:8847/companion/...
+//
+// Or write a custom Companion module using the WebSocket at the same host/port.
+//   WS message format → send:    { type:"command", camId:"cam1", cmd:"rec?cmd=trig" }
+//   WS message format → receive: { type:"status",  camId:"cam1", connected:true, status:{...} }
+
+/** GET /companion/status – flat status map for all cameras (Companion variables) */
+app.get('/companion/status', (req, res) => {
   const result = {};
-  cameras.forEach((session, camId) => {
+  cameras.forEach((s, camId) => {
     result[camId] = {
-      connected: session.connected,
-      label: session.config.label,
-      ip: session.config.ip,
-      status: session.status,
+      connected: s.connected,
+      label:     s.config.label,
+      ip:        s.config.ip,
+      ...s.status,
     };
   });
   res.json(result);
 });
 
+/** GET /companion/status/:camId – single camera status */
+app.get('/companion/status/:camId', (req, res) => {
+  const s = cameras.get(req.params.camId);
+  if (!s) return res.status(404).json({ error: 'Camera not found' });
+  res.json({ connected: s.connected, label: s.config.label, ...s.status });
+});
+
+/** POST /companion/command  { camId, cmd } */
+app.post('/companion/command', async (req, res) => {
+  const { camId, cmd } = req.body;
+  const session = cameras.get(camId);
+  if (!session) return res.status(404).json({ error: 'Camera not found' });
+  try {
+    res.json(await sendCommand(session, cmd));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /companion/cameras – list all configured camera slots */
+app.get('/companion/cameras', (req, res) => {
+  const list = [];
+  cameras.forEach((s, camId) => {
+    list.push({ camId, label: s.config.label, ip: s.config.ip, connected: s.connected });
+  });
+  res.json(list);
+});
+
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 
 wss.on('connection', (ws) => {
-  console.log('Dashboard client connected');
-
-  // Send current state to the new client
-  cameras.forEach((session, camId) => {
-    ws.send(
-      JSON.stringify({
-        type: 'status',
-        camId,
-        connected: session.connected,
-        status: session.status,
-        label: session.config.label,
-        ip: session.config.ip,
-      })
-    );
+  // Push current state to newly connected client (dashboard or Companion)
+  cameras.forEach((s, camId) => {
+    ws.send(JSON.stringify({
+      type: 'status', camId,
+      connected: s.connected, status: s.status,
+      label: s.config.label, ip: s.config.ip,
+    }));
   });
 
   ws.on('message', async (raw) => {
@@ -369,21 +428,19 @@ wss.on('connection', (ws) => {
       if (msg.type === 'command') {
         const session = cameras.get(msg.camId);
         if (session) {
-          try {
-            await sendCommand(session, msg.cmd);
-          } catch (err) {
+          try { await sendCommand(session, msg.cmd); }
+          catch (err) {
             ws.send(JSON.stringify({ type: 'error', camId: msg.camId, error: err.message }));
           }
         }
       }
     } catch (_) {}
   });
-
-  ws.on('close', () => console.log('Dashboard client disconnected'));
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 server.listen(PORT, () => {
-  console.log(`Canon Remote Dashboard running → http://localhost:${PORT}`);
+  console.log(`Canon Remote Dashboard  →  http://localhost:${PORT}`);
+  console.log(`Companion API           →  http://localhost:${PORT}/companion/`);
 });

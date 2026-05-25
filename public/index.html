@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Canon Remote Dashboard</title>
+  <title>Canon Control Dashboard</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -13,27 +13,28 @@
       <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="12" cy="12" r="3"/>
         <path d="M4 8l2-2h12l2 2v8l-2 2H6l-2-2V8z"/>
-        <path d="M16 2l2 6"/>
-        <path d="M8 2L6 8"/>
+        <path d="M16 2l2 6"/><path d="M8 2L6 8"/>
       </svg>
-      Canon Remote Dashboard
+      Canon Control Dashboard
     </div>
+
+    <button class="btn-rec-all" id="btn-rec-all" title="Trigger REC on all connected cameras">
+      <span class="rec-all-dot"></span> REC ALL
+    </button>
+
     <div id="cam-rec-indicators" class="cam-rec-indicators"></div>
-    <div class="header-controls">
-      <button class="btn btn-sm btn-rec-all" id="btn-rec-all" title="Trigger record on all connected cameras">
-        <span class="rec-all-dot"></span> REC ALL
-      </button>
-      <button class="btn btn-sm btn-outline" id="btn-layout-toggle" title="Toggle layout">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg>
-      </button>
-    </div>
+
+    <button class="btn btn-sm btn-outline hdr-btn" id="btn-layout-toggle" title="Cycle layout">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/>
+        <rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/>
+      </svg>
+    </button>
   </header>
 
-  <main class="grid" id="camera-grid">
-    <!-- Camera panels injected by JS -->
-  </main>
+  <main class="grid" id="camera-grid"></main>
 
-  <!-- Camera Config Modal -->
+  <!-- Camera config modal -->
   <div class="modal-backdrop" id="modal-backdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-header">
@@ -56,7 +57,15 @@
         </div>
         <div class="form-group">
           <label for="form-password">Password</label>
-          <input type="password" id="form-password" value="12345678" placeholder="12345678" autocomplete="new-password" />
+          <input type="password" id="form-password" value="12345678" placeholder="12345678"
+                 autocomplete="new-password" />
+        </div>
+        <div class="form-group">
+          <label for="form-protocol">Camera Protocol</label>
+          <select id="form-protocol">
+            <option value="browserremote">XF / C Series – Browser Remote (XF705, XF405, C200, C100…)</option>
+            <option value="xcprotocol" disabled>XC Series – XC Protocol (coming soon)</option>
+          </select>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" id="btn-disconnect-cam">Disconnect</button>

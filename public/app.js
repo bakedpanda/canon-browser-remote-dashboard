@@ -1,47 +1,38 @@
 /**
- * Canon Remote Dashboard – Frontend Application
+ * Canon Control Dashboard – Frontend
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-
 'use strict';
 
 // ── Constants ────────────────────────────────────────────────
 const CAM_IDS = ['cam1', 'cam2', 'cam3', 'cam4'];
+const STORAGE_KEY = 'canon_dashboard_v2';
 
 const CAM_DEFAULTS = {
-  cam1: { label: 'Camera 1', username: 'Full', password: '12345678', ip: '' },
-  cam2: { label: 'Camera 2', username: 'Full', password: '12345678', ip: '' },
-  cam3: { label: 'Camera 3', username: 'Full', password: '12345678', ip: '' },
-  cam4: { label: 'Camera 4', username: 'Full', password: '12345678', ip: '' },
+  cam1: { label: 'Camera 1', ip: '', username: 'Full', password: '12345678', protocol: 'browserremote' },
+  cam2: { label: 'Camera 2', ip: '', username: 'Full', password: '12345678', protocol: 'browserremote' },
+  cam3: { label: 'Camera 3', ip: '', username: 'Full', password: '12345678', protocol: 'browserremote' },
+  cam4: { label: 'Camera 4', ip: '', username: 'Full', password: '12345678', protocol: 'browserremote' },
 };
-
-const STORAGE_KEY = 'canon_dashboard_cameras';
 
 // ── State ────────────────────────────────────────────────────
 const state = {
-  cameras: {}, // camId → { config, connected, status }
+  cameras: {},
   ws: null,
   wsReconnectTimer: null,
 };
 
 // ── Persistence ──────────────────────────────────────────────
 function loadConfigs() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
+  catch { return {}; }
 }
-
-function saveConfig(camId, config) {
-  const all = loadConfigs();
-  all[camId] = config;
+function saveConfig(camId, cfg) {
+  const all = loadConfigs(); all[camId] = cfg;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
 }
-
 function deleteConfig(camId) {
-  const all = loadConfigs();
-  delete all[camId];
+  const all = loadConfigs(); delete all[camId];
   localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
 }
 
@@ -51,32 +42,17 @@ function connectWS() {
   const ws = new WebSocket(`${proto}://${location.host}`);
   state.ws = ws;
 
-  ws.addEventListener('open', () => {
-    console.log('WS connected');
-    clearTimeout(state.wsReconnectTimer);
-  });
+  ws.addEventListener('open', () => clearTimeout(state.wsReconnectTimer));
 
-  ws.addEventListener('message', (evt) => {
-    try {
-      const msg = JSON.parse(evt.data);
-      handleWSMessage(msg);
-    } catch (e) {
-      console.warn('WS parse error', e);
-    }
+  ws.addEventListener('message', evt => {
+    try { handleWSMessage(JSON.parse(evt.data)); } catch (_) {}
   });
 
   ws.addEventListener('close', () => {
-    console.log('WS closed – reconnecting in 3 s');
     state.wsReconnectTimer = setTimeout(connectWS, 3000);
   });
 
   ws.addEventListener('error', () => ws.close());
-}
-
-function sendWS(msg) {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify(msg));
-  }
 }
 
 function handleWSMessage(msg) {
@@ -87,66 +63,65 @@ function handleWSMessage(msg) {
     cam.status    = msg.status || {};
     if (msg.label) cam.config.label = msg.label;
     renderCam(msg.camId);
+    updateHeaderIndicators();
   } else if (msg.type === 'disconnected') {
     const cam = state.cameras[msg.camId];
     if (!cam) return;
     cam.connected = false;
-    cam.status = {};
+    cam.status    = {};
     renderCam(msg.camId);
-  } else if (msg.type === 'error') {
-    console.warn(`Camera error [${msg.camId}]:`, msg.error);
+    updateHeaderIndicators();
   }
 }
 
-// ── API calls ────────────────────────────────────────────────
+// ── API ──────────────────────────────────────────────────────
 async function apiConnect(camId, config) {
-  const res = await fetch('/api/connect', {
+  return (await fetch('/api/connect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ camId, ...config }),
-  });
-  return res.json();
+  })).json();
 }
 
 async function apiDisconnect(camId) {
-  const res = await fetch('/api/disconnect', {
+  return (await fetch('/api/disconnect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ camId }),
-  });
-  return res.json();
+  })).json();
 }
 
 async function apiCommand(camId, cmd) {
-  const res = await fetch('/api/command', {
+  return (await fetch('/api/command', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ camId, cmd }),
-  });
-  return res.json();
+  })).json();
 }
 
-// ── Camera panel rendering ───────────────────────────────────
-
-function getPanel(camId) {
-  return document.getElementById(`panel-${camId}`);
-}
-
-// Resolve a value from a status object trying multiple possible key names
-function val(s, ...keys) {
+// ── Status helpers ───────────────────────────────────────────
+/** Resolve a value from the status object, trying multiple key names */
+function v(s, ...keys) {
   for (const k of keys) {
-    const v = s[k];
-    if (v !== undefined && v !== null && v !== '') return String(v);
+    const val = s[k];
+    if (val !== undefined && val !== null && val !== '') return String(val);
   }
   return '—';
 }
 
 function isRecording(status) {
-  const r = val(status, 'rec', 'Rec', 'record', 'Record', 'r').toLowerCase();
-  return r === 'rec' || r === 'recording' || r === 'true';
+  const r = v(status, 'rec', 'Rec', 'record', 'Record').toLowerCase();
+  return r === 'rec' || r === 'recording';
 }
 
-// Parse "H:MM:SS" or "H:MM" → total minutes. Returns Infinity if unparseable.
+/** Returns true if a mode string indicates an "auto" / "active" state */
+function isAuto(modeStr) {
+  if (!modeStr || modeStr === '—') return false;
+  const m = modeStr.toLowerCase();
+  return m.includes('auto') || m.includes('on') || m.includes('continuous')
+      || m.includes('awb') || m.includes('lock') || m === 'true';
+}
+
 function parseRemainingToMinutes(str) {
   if (!str || str === '—') return Infinity;
   const parts = str.split(':').map(Number);
@@ -156,211 +131,278 @@ function parseRemainingToMinutes(str) {
   return Infinity;
 }
 
-function batteryClass(pct) {
-  const n = parseInt(pct, 10);
-  if (isNaN(n)) return '';
-  if (n <= 10) return 'batt-critical';
-  if (n <= 25) return 'batt-low';
+function remainClass(str) {
+  const m = parseRemainingToMinutes(str);
+  if (m <= 10) return 'remain-critical';
+  if (m <= 30) return 'remain-warning';
   return '';
 }
 
+// ── Header indicators ────────────────────────────────────────
 function updateHeaderIndicators() {
   const el = document.getElementById('cam-rec-indicators');
   if (!el) return;
-  el.innerHTML = CAM_IDS.map((camId) => {
+  el.innerHTML = CAM_IDS.map(camId => {
     const cam = state.cameras[camId];
     if (!cam || !cam.config.ip) return '';
     const rec  = cam.connected && isRecording(cam.status);
     const live = cam.connected && !rec;
     const cls  = rec ? 'hdr-rec' : live ? 'hdr-live' : 'hdr-off';
+
+    // Remaining time for header chip
+    const sdAs = v(cam.status, 'sdcard_a_state', 'sdA_state').toLowerCase();
+    const sdBs = v(cam.status, 'sdcard_b_state', 'sdB_state').toLowerCase();
+    const aRemain = v(cam.status, 'sdcard_a_remaining', 'sdA_remain');
+    const bRemain = v(cam.status, 'sdcard_b_remaining', 'sdB_remain');
+    const activeRemain = sdAs.includes('rec') ? aRemain : sdBs.includes('rec') ? bRemain : '—';
+    const remStr = (rec && activeRemain !== '—') ? `<span class="hdr-remain ${remainClass(activeRemain)}">${activeRemain}</span>` : '';
+
     return `<div class="hdr-cam ${cls}">
       <span class="hdr-dot"></span>
-      <span class="hdr-label">${cam.config.label}</span>
+      <div class="hdr-info">
+        <span class="hdr-label">${cam.config.label}</span>
+        <span class="hdr-status">${rec ? 'REC' : live ? 'LIVE' : 'OFF'}${remStr}</span>
+      </div>
     </div>`;
   }).join('');
 }
 
+// ── Panel rendering ──────────────────────────────────────────
+function getPanel(camId) { return document.getElementById(`panel-${camId}`); }
+
 function renderCam(camId) {
-  const cam    = state.cameras[camId];
-  const panel  = getPanel(camId);
-  if (!panel) return;
+  const cam   = state.cameras[camId];
+  const panel = getPanel(camId);
+  if (!panel || !cam) return;
 
   const { config, connected, status } = cam;
   const recording = connected && isRecording(status);
 
-  panel.classList.toggle('is-recording',   recording);
+  panel.classList.toggle('is-recording',    recording);
   panel.classList.toggle('is-disconnected', !connected);
 
-  // Header
   panel.querySelector('.cam-name').textContent = config.label || camId;
   panel.querySelector('.cam-ip').textContent   = config.ip   || '—';
 
   const dot = panel.querySelector('.status-dot');
   dot.className = `status-dot ${connected ? 'connected' : 'disconnected'}`;
 
-  // Body
   const body = panel.querySelector('.cam-body');
   if (!connected) {
     body.innerHTML = disconnectedHTML(config, camId);
-    attachBodyListeners(camId, panel);
-    return;
+  } else {
+    body.innerHTML = connectedHTML(camId, status, recording, config);
   }
-
-  body.innerHTML = connectedHTML(camId, status, recording, config);
   attachBodyListeners(camId, panel);
-  updateHeaderIndicators();
 }
 
 function disconnectedHTML(config, camId) {
   const msg = config.ip ? `Not connected · ${config.ip}` : 'No camera configured';
-  return `
-    <div class="cam-placeholder">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M4 8l2-2h12l2 2v8l-2 2H6l-2-2V8z"/>
-        <line x1="3" y1="3" x2="21" y2="21" stroke-width="1.5"/>
-      </svg>
-      <p>${msg}</p>
-      <button class="btn btn-primary btn-connect-panel" data-action="connect" data-camid="${camId}">
-        Connect
-      </button>
-    </div>`;
+  return `<div class="cam-placeholder">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M4 8l2-2h12l2 2v8l-2 2H6l-2-2V8z"/>
+      <line x1="3" y1="3" x2="21" y2="21" stroke-width="1.5"/>
+    </svg>
+    <p>${msg}</p>
+    <button class="btn btn-primary btn-connect-panel" data-action="connect" data-camid="${camId}">Connect</button>
+  </div>`;
 }
 
 function connectedHTML(camId, s, recording, config) {
-  // ── Resolve status values (tries multiple key names across firmware versions) ──
-  const tc       = val(s, 'tc', 'TC', 'timecode', 'TimeCode');
+  // ── Resolve status values ──
+  const tc       = v(s, 'tc', 'TC', 'timecode');
+  const tcSub    = v(s, 'tc2', 'TC2', 'ltc');   // secondary TC if present
+
   const battPct  = s.battery_percent ?? s.batteryPercent ?? null;
-  const battStr  = battPct !== null ? `${battPct}%` : val(s, 'batt', 'battery', 'Battery');
-  const battCls  = batteryClass(battPct);
+  const battStr  = battPct !== null ? `${battPct}%` : v(s, 'batt', 'battery');
+  const battRem  = v(s, 'battery_remaining', 'battRemain', 'batt_remain');
+  const dcIn     = v(s, 'dc_in', 'dcin', 'power_source', 'PowerSource');
+  const isDC     = dcIn !== '—' && (dcIn.toLowerCase().includes('dc') || dcIn.toLowerCase() === 'on');
+  const camId_hw = v(s, 'camid', 'CamId', 'camera_id');
+  const recFmt   = v(s, 'rec_fmt', 'recfmt', 'RecFormat', 'format');
+  const zoomPos  = v(s, 'zoom_position', 'ZoomPos', 'zoom');
+  const fullAuto = v(s, 'fullauto', 'FullAuto').toLowerCase() === 'on';
+  const shutterV = v(s, 'shutter_value', 'ssv', 'Shutter');
 
-  const iris     = val(s, 'iris_value', 'iris', 'av', 'Iris');
-  const gainLbl  = val(s, 'isogain_mode', 'gain_mode', 'gcm').toLowerCase() === 'iso' ? 'ISO' : 'Gain';
-  const gain     = val(s, 'isogain_value', 'gain_value', 'gcv', 'Gain');
-  const shutter  = val(s, 'shutter_value', 'ssv', 'Shutter');
-  const ndRaw    = s.neutraldensity_value ?? s.nd_value ?? s.nd ?? null;
-  const nd       = ndRaw !== null ? `ND${ndRaw}` : '—';
-  const wbMode   = val(s, 'wb_mode', 'wbm', 'WhiteBalance');
-  const wbK      = val(s, 'kelvinvalue', 'awb_kelvinvalue', 'wb_value', 'wbv', 'Kelvin');
-  const wbStr    = wbK !== '—' ? `${wbMode} ${wbK}K` : wbMode;
-  const afMode   = val(s, 'afmode', 'af_mode', 'afm', 'AF');
-  const fullAuto = val(s, 'fullauto', 'FullAuto').toLowerCase() === 'on';
-  const recFmt   = val(s, 'rec_fmt', 'recfmt', 'RecFormat', 'format');
-
-  const sdAState  = val(s, 'sdcard_a_state',     'sdA_state',  'SlotAState');
-  const sdARemain = val(s, 'sdcard_a_remaining',  'sdA_remain', 'SlotARemain');
-  const sdBState  = val(s, 'sdcard_b_state',     'sdB_state',  'SlotBState');
-  const sdBRemain = val(s, 'sdcard_b_remaining',  'sdB_remain', 'SlotBRemain');
+  const sdAState  = v(s, 'sdcard_a_state',    'sdA_state',  'SlotAState');
+  const sdARemain = v(s, 'sdcard_a_remaining', 'sdA_remain', 'SlotARemain');
+  const sdBState  = v(s, 'sdcard_b_state',    'sdB_state',  'SlotBState');
+  const sdBRemain = v(s, 'sdcard_b_remaining', 'sdB_remain', 'SlotBRemain');
   const sdAActive = sdAState.toLowerCase().includes('rec');
   const sdBActive = sdBState.toLowerCase().includes('rec');
 
-  // Record time remaining (active slot when recording, otherwise show both)
   const activeRemain = sdAActive ? sdARemain : sdBActive ? sdBRemain
                      : sdARemain !== '—' ? sdARemain : sdBRemain;
-  const remainMins   = parseRemainingToMinutes(activeRemain);
-  const remainCls    = remainMins <= 10 ? 'remain-critical'
-                     : remainMins <= 30 ? 'remain-warning' : '';
+  const rCls = remainClass(activeRemain);
+
+  // ── Exposure ──
+  const irisV    = v(s, 'iris_value',    'iris', 'av', 'Iris');
+  const irisMode = v(s, 'iris_mode',     'am',   'IrisMode');
+  const autoIris = isAuto(irisMode) || irisMode.includes('auto');
+
+  const gainV    = v(s, 'isogain_value', 'gain_value', 'gcv', 'Gain');
+  const gainMode = v(s, 'isogain_mode',  'gain_mode',  'gcm');
+  const gainLbl  = gainMode.toLowerCase() === 'iso' ? 'ISO' : 'Gain';
+  const autoGain = isAuto(gainMode);
+
+  const ndV      = s.neutraldensity_value ?? s.nd_value ?? s.nd ?? null;
+  const ndStr    = ndV !== null ? `ND ${ndV}` : '—';
+
+  const wbMode   = v(s, 'wb_mode', 'wbm', 'WhiteBalance');
+  const wbK      = v(s, 'kelvinvalue', 'awb_kelvinvalue', 'wb_value', 'wbv');
+  const wbVal    = wbK !== '—' ? `${wbK}K` : wbMode;
+  const autoWB   = wbMode.toLowerCase().includes('auto') || wbMode.toLowerCase() === 'awb';
+
+  // ── Focus / AF ──
+  const afMode    = v(s, 'afmode', 'af_mode', 'afm', 'AF');
+  const afActive  = afMode !== '—' && !afMode.toLowerCase().includes('manual') && !afMode.toLowerCase().includes('off') && afMode !== '—';
+  const afLockV   = v(s, 'af_lock', 'aflock', 'AfLock');
+  const afLocked  = afLockV !== '—' && afLockV.toLowerCase() === 'lock';
+  const faceDetV  = v(s, 'facedetection', 'face_detect', 'fdat', 'FaceDetect');
+  const faceOn    = faceDetV !== '—' && (faceDetV.toLowerCase() === 'on' || faceDetV.toLowerCase() === 'true');
+
+  // ── Camera info items ──
+  const infoItems = [];
+  if (battStr !== '—') {
+    let battLine = `Battery: ${battStr}`;
+    if (battRem !== '—') battLine += ` (${battRem})`;
+    infoItems.push(battLine);
+  }
+  if (isDC) infoItems.push('Power: DC IN');
+  else if (battStr !== '—') infoItems.push('Power: Battery');
+  if (recFmt   !== '—') infoItems.push(`Format: ${recFmt}`);
+  if (shutterV !== '—') infoItems.push(`Shutter: ${shutterV}`);
+  if (zoomPos  !== '—') infoItems.push(`Zoom: ${zoomPos}`);
+  if (camId_hw !== '—') infoItems.push(`ID: ${camId_hw}`);
+  if (fullAuto)          infoItems.push('Full Auto: ON');
+
+  const infoHTML = infoItems.length
+    ? infoItems.map(i => `<div class="info-line">${i}</div>`).join('')
+    : '<div class="info-line info-dim">No data yet</div>';
+
+  // ── Toggle helper ──
+  const tog = (active, label, cmd) =>
+    `<button class="btn btn-xs btn-toggle${active ? ' is-active' : ''}" data-cmd="${cmd}" data-camid="${camId}">${label}</button>`;
 
   return `
-    <!-- ── Recording strip (full-width, red when rolling) ── -->
-    <div class="rec-strip ${recording ? 'is-recording' : ''}">
-      <div class="rec-strip-left">
-        <span class="rec-dot-el"></span>
-        <span class="rec-strip-lbl">${recording ? 'REC' : 'STBY'}</span>
-        <span class="rec-tc">${tc}</span>
-      </div>
-      <div class="rec-strip-right">
-        <span class="${battCls}">${battStr}</span>
-        ${recFmt !== '—' ? `<span class="rec-fmt">${recFmt}</span>` : ''}
-      </div>
-    </div>
+  <div class="cam-layout">
 
-    <!-- ── Compact control grid (value shown inline with buttons) ── -->
-    <div class="ctrl-grid">
+    <!-- ════ LEFT COLUMN ════ -->
+    <div class="cam-col-left">
 
-      <div class="ctrl-row">
-        <span class="cl">Iris</span>
-        <span class="cv">${iris}</span>
+      <!-- REC + TC / Remaining -->
+      <div class="rec-tc-block">
+        <button class="btn-rec-big${recording ? ' is-recording' : ''}" data-cmd="rec?cmd=trig" data-camid="${camId}">
+          <span class="rec-big-dot"></span>
+          REC
+        </button>
+        <div class="tc-remain-block">
+          <div class="tc-primary">${tc}</div>
+          ${tcSub !== '—' ? `<div class="tc-secondary">${tcSub}</div>` : ''}
+          <div class="remain-header">Total Time Remaining</div>
+          <div class="slot-list">
+            <div class="slot-row${sdAActive ? ' slot-active' : ''}">
+              <span class="slot-lbl">Card A</span>
+              <span class="slot-time">${sdARemain}</span>
+            </div>
+            <div class="slot-row${sdBActive ? ' slot-active' : ''}">
+              <span class="slot-lbl">Card B</span>
+              <span class="slot-time">${sdBRemain}</span>
+            </div>
+            ${recording && activeRemain !== '—'
+              ? `<div class="remain-countdown ${rCls}">${activeRemain} remaining</div>` : ''}
+          </div>
+          <button class="btn btn-xs btn-outline" data-cmd="rec?cmd=slot" data-camid="${camId}">SLOT SELECT</button>
+        </div>
+      </div>
+
+      <!-- Focus row -->
+      <div class="ctrl-line">
+        <span class="cl">Focus</span>
+        <button class="btn btn-xs" data-cmd="drivelens?fl=3"  data-camid="${camId}">N</button>
+        <button class="btn btn-xs" data-cmd="drivelens?fl=-3" data-camid="${camId}">F</button>
+        ${tog(afActive,  'AF',   'drivelens?sw=afmode')}
+        ${tog(afLocked,  'LOCK', 'drivelens?af=togglelock')}
+        ${tog(faceOn,    'FACE', `setprop?fdat=${faceOn ? 'off' : 'on'}`)}
+      </div>
+
+      <!-- Zoom row -->
+      <div class="ctrl-line">
+        <span class="cl">Zoom</span>
+        <button class="btn btn-xs" data-cmd="drivelens?zoom=wide" data-camid="${camId}">−</button>
+        <button class="btn btn-xs" data-cmd="drivelens?zoom=tele" data-camid="${camId}">+</button>
+      </div>
+
+      <!-- Camera info box -->
+      <div class="cam-info-box">
+        <div class="cam-info-title">Camera Info</div>
+        ${infoHTML}
+      </div>
+
+    </div><!-- /cam-col-left -->
+
+    <!-- ════ RIGHT COLUMN ════ -->
+    <div class="cam-col-right">
+
+      <!-- Iris -->
+      <div class="exp-row">
+        <span class="exp-lbl">Iris</span>
         <div class="nudge-pair">
           <button class="btn" data-cmd="drivelens?iris=minus" data-camid="${camId}">−</button>
           <button class="btn" data-cmd="drivelens?iris=plus"  data-camid="${camId}">+</button>
         </div>
-        <button class="btn btn-xs btn-outline" data-cmd="drivelens?ai=push" data-camid="${camId}">Auto</button>
-        <span class="cs"></span>
-        <span class="cl">${gainLbl}</span>
-        <span class="cv">${gain}</span>
+        ${tog(autoIris, 'A', autoIris ? 'setprop?am=maniris' : 'setprop?am=autoiris')}
+        <span class="exp-val">${irisV}</span>
+      </div>
+
+      <!-- Gain -->
+      <div class="exp-row">
+        <span class="exp-lbl">${gainLbl}</span>
         <div class="nudge-pair">
           <button class="btn" data-cmd="drivelens?gain=minus" data-camid="${camId}">−</button>
           <button class="btn" data-cmd="drivelens?gain=plus"  data-camid="${camId}">+</button>
         </div>
+        ${tog(autoGain, 'A', autoGain ? 'setprop?gcm=manual' : 'setprop?gcm=auto')}
+        <span class="exp-val">${gainV}</span>
       </div>
 
-      <div class="ctrl-row">
-        <span class="cl">ND</span>
-        <span class="cv">${nd}</span>
+      <!-- ND -->
+      <div class="exp-row">
+        <span class="exp-lbl">ND</span>
         <div class="nudge-pair">
           <button class="btn" data-cmd="drivelens?nd=down" data-camid="${camId}">−</button>
           <button class="btn" data-cmd="drivelens?nd=up"   data-camid="${camId}">+</button>
         </div>
-        <span class="cs"></span>
-        <span class="cl">Shut</span>
-        <span class="cv">${shutter}</span>
+        <span class="exp-val">${ndStr}</span>
       </div>
 
-      <div class="ctrl-row">
-        <span class="cl">WB</span>
-        <span class="cv wb-val">${wbStr}</span>
-        <button class="btn btn-xs btn-outline" data-cmd="cmdwb?awbhold=trig"     data-camid="${camId}">AWB</button>
-        <button class="btn btn-xs btn-outline" data-cmd="setprop?wbm=daylight"   data-camid="${camId}">Day</button>
-        <button class="btn btn-xs btn-outline" data-cmd="setprop?wbm=tungsten"   data-camid="${camId}">Tung</button>
-      </div>
-
-      <div class="ctrl-row">
-        <span class="cl">Focus</span>
+      <!-- WB -->
+      <div class="exp-row">
+        <span class="exp-lbl">WB</span>
         <div class="nudge-pair">
-          <button class="btn" data-cmd="drivelens?fl=3"  data-camid="${camId}">N</button>
-          <button class="btn" data-cmd="drivelens?fl=-3" data-camid="${camId}">F</button>
+          <button class="btn" data-cmd="setprop?wbm=seta"     data-camid="${camId}">−</button>
+          <button class="btn" data-cmd="setprop?wbm=setb"     data-camid="${camId}">+</button>
         </div>
-        <span class="cl af-cl">${afMode}</span>
-        <button class="btn btn-xs btn-outline" data-cmd="drivelens?sw=afmode"     data-camid="${camId}">AF</button>
-        <button class="btn btn-xs btn-outline" data-cmd="drivelens?af=togglelock" data-camid="${camId}">Lock</button>
-        <span class="cs"></span>
-        <span class="cl">Zoom</span>
-        <div class="nudge-pair">
-          <button class="btn" data-cmd="drivelens?zoom=wide" data-camid="${camId}">W</button>
-          <button class="btn" data-cmd="drivelens?zoom=tele" data-camid="${camId}">T</button>
-        </div>
+        ${tog(autoWB, 'AWB', 'cmdwb?awbhold=trig')}
+        <span class="exp-val">${wbVal}</span>
       </div>
 
-      <!-- Record row -->
-      <div class="ctrl-row rec-row">
-        <button class="btn btn-record ${recording ? 'is-recording' : ''}" data-cmd="rec?cmd=trig" data-camid="${camId}">
-          <span class="rec-btn-dot"></span> REC
+      <!-- Full auto + disconnect -->
+      <div class="right-footer">
+        ${tog(fullAuto, `Full Auto ${fullAuto ? 'ON' : 'OFF'}`,
+          `setprop?fullauto=${fullAuto ? 'off' : 'on'}`)}
+        <span class="flex-1"></span>
+        <button class="btn btn-xs btn-disconnect" data-action="disconnect" data-camid="${camId}">
+          DISCONNECT
         </button>
-        ${activeRemain !== '—' ? `<span class="remain-time ${remainCls}">${activeRemain}</span>` : ''}
-        <span class="cs"></span>
-        <span class="cl">SD</span>
-        <span class="cv sd-val ${sdAActive ? 'sd-active' : ''}">A ${sdARemain}</span>
-        <span class="cv sd-val ${sdBActive ? 'sd-active' : ''}">B ${sdBRemain}</span>
-        <button class="btn btn-xs btn-outline" data-cmd="rec?cmd=slot" data-camid="${camId}">Swap</button>
       </div>
 
-      <!-- Bottom row -->
-      <div class="ctrl-row bottom-row">
-        <button class="btn btn-xs ${fullAuto ? 'btn-primary' : 'btn-outline'}"
-                data-cmd="setprop?fullauto=${fullAuto ? 'off' : 'on'}" data-camid="${camId}">
-          Full Auto ${fullAuto ? 'ON' : 'OFF'}
-        </button>
-        <span class="cs"></span>
-        <button class="btn btn-xs btn-disconnect" data-action="disconnect" data-camid="${camId}">Disconnect</button>
-      </div>
-
-    </div>
-  `;
+    </div><!-- /cam-col-right -->
+  </div>`;
 }
 
-
-// Shared disconnect logic used by both the modal and in-panel button
+// ── Disconnect helper ────────────────────────────────────────
 async function doDisconnect(camId) {
   await apiDisconnect(camId);
   state.cameras[camId].connected = false;
@@ -369,77 +411,61 @@ async function doDisconnect(camId) {
   deleteConfig(camId);
   updateGridLayout();
   renderCam(camId);
+  updateHeaderIndicators();
 }
 
-// Attach event listeners to dynamically rendered body controls
+// ── Listeners ────────────────────────────────────────────────
 function attachBodyListeners(camId, panel) {
-  panel.querySelectorAll('[data-cmd]').forEach((el) => {
-    el.addEventListener('click', (e) => {
+  panel.querySelectorAll('[data-cmd]').forEach(el => {
+    el.addEventListener('click', e => {
       e.stopPropagation();
-      const cmd    = el.dataset.cmd;
-      const target = el.dataset.camid;
-      apiCommand(target, cmd).catch(console.error);
+      apiCommand(el.dataset.camid, el.dataset.cmd).catch(console.error);
     });
   });
-
-  panel.querySelectorAll('[data-action]').forEach((el) => {
-    el.addEventListener('click', (e) => {
+  panel.querySelectorAll('[data-action]').forEach(el => {
+    el.addEventListener('click', e => {
       e.stopPropagation();
-      const action = el.dataset.action;
-      const target = el.dataset.camid;
-      if (action === 'connect')    openModal(target);
-      if (action === 'disconnect') doDisconnect(target).catch(console.error);
+      if (el.dataset.action === 'connect')    openModal(el.dataset.camid);
+      if (el.dataset.action === 'disconnect') doDisconnect(el.dataset.camid).catch(console.error);
     });
   });
 }
 
 // ── Grid layout ──────────────────────────────────────────────
 function updateGridLayout() {
-  const connected = CAM_IDS.filter((id) => {
-    const cam = state.cameras[id];
-    return cam && cam.config.ip;
-  });
-  const grid = document.getElementById('camera-grid');
-  grid.setAttribute('data-active', connected.length || 4);
+  const n = CAM_IDS.filter(id => state.cameras[id]?.config?.ip).length;
+  document.getElementById('camera-grid').setAttribute('data-active', n || 4);
 }
 
-// ── Build initial DOM panels ──────────────────────────────────
+// ── Panel shell ──────────────────────────────────────────────
 function buildPanels() {
   const grid = document.getElementById('camera-grid');
   grid.innerHTML = '';
-
-  CAM_IDS.forEach((camId) => {
+  CAM_IDS.forEach(camId => {
+    const cfg   = state.cameras[camId]?.config || CAM_DEFAULTS[camId];
     const panel = document.createElement('div');
-    panel.className   = 'cam-panel is-disconnected';
-    panel.id          = `panel-${camId}`;
-    panel.innerHTML   = panelShellHTML(camId);
+    panel.className = 'cam-panel is-disconnected';
+    panel.id        = `panel-${camId}`;
+    panel.innerHTML = `
+      <div class="cam-header">
+        <div>
+          <div class="cam-name">${cfg.label}</div>
+          <div class="cam-ip">${cfg.ip || 'Not configured'}</div>
+        </div>
+        <div class="cam-header-right">
+          <span class="status-dot disconnected"></span>
+          <button class="btn-icon btn-config" aria-label="Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M12 2v2m0 16v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M2 12h2m16 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="cam-body"></div>`;
     grid.appendChild(panel);
-
-    // Config button (gear icon in header)
     panel.querySelector('.btn-config').addEventListener('click', () => openModal(camId));
   });
-}
-
-function panelShellHTML(camId) {
-  const cfg = state.cameras[camId]?.config || CAM_DEFAULTS[camId];
-  return `
-    <div class="cam-header">
-      <div>
-        <div class="cam-name">${cfg.label}</div>
-        <div class="cam-ip">${cfg.ip || 'Not configured'}</div>
-      </div>
-      <div class="cam-header-right">
-        <span class="status-dot disconnected"></span>
-        <button class="btn-icon btn-config" aria-label="Camera settings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M12 2v2m0 16v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M2 12h2m16 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-    <div class="cam-body"></div>
-  `;
 }
 
 // ── Modal ────────────────────────────────────────────────────
@@ -449,17 +475,14 @@ function openModal(camId) {
   _modalCamId = camId;
   const cam = state.cameras[camId];
   const cfg = cam?.config || CAM_DEFAULTS[camId];
-
-  document.getElementById('modal-title').textContent = `Configure ${cfg.label}`;
-  document.getElementById('form-camId').value    = camId;
-  document.getElementById('form-label').value    = cfg.label || '';
-  document.getElementById('form-ip').value       = cfg.ip   || '';
-  document.getElementById('form-username').value = cfg.username || 'Full';
-  document.getElementById('form-password').value = cfg.password || '12345678';
-
-  const disconnectBtn = document.getElementById('btn-disconnect-cam');
-  disconnectBtn.style.display = cam?.connected ? '' : 'none';
-
+  document.getElementById('modal-title').textContent    = `Configure ${cfg.label}`;
+  document.getElementById('form-camId').value           = camId;
+  document.getElementById('form-label').value           = cfg.label    || '';
+  document.getElementById('form-ip').value              = cfg.ip       || '';
+  document.getElementById('form-username').value        = cfg.username || 'Full';
+  document.getElementById('form-password').value        = cfg.password || '12345678';
+  document.getElementById('form-protocol').value        = cfg.protocol || 'browserremote';
+  document.getElementById('btn-disconnect-cam').style.display = cam?.connected ? '' : 'none';
   document.getElementById('modal-backdrop').removeAttribute('hidden');
   document.getElementById('form-ip').focus();
 }
@@ -471,92 +494,73 @@ function closeModal() {
 
 // ── Init ─────────────────────────────────────────────────────
 function init() {
-  // Populate state from storage + defaults
   const saved = loadConfigs();
-  CAM_IDS.forEach((id) => {
-    const savedCfg = saved[id];
+  CAM_IDS.forEach(id => {
     state.cameras[id] = {
-      config: { ...CAM_DEFAULTS[id], ...(savedCfg || {}), id },
+      config:    { ...CAM_DEFAULTS[id], ...(saved[id] || {}), id },
       connected: false,
-      status: {},
+      status:    {},
     };
   });
 
   buildPanels();
-  CAM_IDS.forEach((id) => renderCam(id));
+  CAM_IDS.forEach(id => renderCam(id));
   updateGridLayout();
   updateHeaderIndicators();
 
-  // Modal events
+  // Modal
   document.getElementById('modal-close').addEventListener('click', closeModal);
-  document.getElementById('modal-backdrop').addEventListener('click', (e) => {
+  document.getElementById('modal-backdrop').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeModal();
   });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeModal();
-  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-  document.getElementById('camera-form').addEventListener('submit', async (e) => {
+  document.getElementById('camera-form').addEventListener('submit', async e => {
     e.preventDefault();
     const camId    = document.getElementById('form-camId').value;
     const label    = document.getElementById('form-label').value.trim() || `Camera ${camId.slice(-1)}`;
     const ip       = document.getElementById('form-ip').value.trim();
     const username = document.getElementById('form-username').value.trim() || 'Full';
     const password = document.getElementById('form-password').value;
-
+    const protocol = document.getElementById('form-protocol').value;
     if (!ip) return;
-
-    const config = { id: camId, label, ip, username, password };
+    const config = { id: camId, label, ip, username, password, protocol };
     state.cameras[camId].config = config;
     saveConfig(camId, config);
     closeModal();
     updateGridLayout();
-    renderCam(camId); // show connecting state
-
-    // Set status dot to "connecting"
+    renderCam(camId);
     const dot = document.querySelector(`#panel-${camId} .status-dot`);
     if (dot) dot.className = 'status-dot connecting';
-
-    try {
-      await apiConnect(camId, config);
-    } catch (err) {
-      console.error('Connect error:', err);
-    }
+    apiConnect(camId, config).catch(console.error);
   });
 
   document.getElementById('btn-disconnect-cam').addEventListener('click', async () => {
     const camId = _modalCamId;
     closeModal();
-    if (!camId) return;
-    doDisconnect(camId).catch(console.error);
+    if (camId) doDisconnect(camId).catch(console.error);
   });
 
-  // REC ALL — trigger record on every connected camera
+  // REC ALL
   document.getElementById('btn-rec-all').addEventListener('click', () => {
-    CAM_IDS.forEach((camId) => {
-      const cam = state.cameras[camId];
-      if (cam && cam.connected) {
-        apiCommand(camId, 'rec?cmd=trig').catch(console.error);
-      }
+    CAM_IDS.forEach(id => {
+      if (state.cameras[id]?.connected)
+        apiCommand(id, 'rec?cmd=trig').catch(console.error);
     });
   });
 
-  // Layout toggle button
+  // Layout toggle
   document.getElementById('btn-layout-toggle').addEventListener('click', () => {
-    const grid = document.getElementById('camera-grid');
-    const cur  = grid.getAttribute('data-active');
-    // Cycle through different active counts for preview
-    const cycle = ['1', '2', '3', '4'];
-    const idx   = cycle.indexOf(cur);
-    grid.setAttribute('data-active', cycle[(idx + 1) % cycle.length]);
+    const grid  = document.getElementById('camera-grid');
+    const cycle = ['1','2','3','4'];
+    const cur   = grid.getAttribute('data-active');
+    grid.setAttribute('data-active', cycle[(cycle.indexOf(cur) + 1) % cycle.length]);
   });
 
-  // Connect WebSocket
   connectWS();
 
-  // Auto-connect saved cameras on load
-  const savedAll = loadConfigs();
-  Object.entries(savedAll).forEach(([camId, cfg]) => {
+  // Auto-reconnect saved cameras
+  Object.entries(loadConfigs()).forEach(([camId, cfg]) => {
     if (cfg.ip) {
       const dot = document.querySelector(`#panel-${camId} .status-dot`);
       if (dot) dot.className = 'status-dot connecting';
