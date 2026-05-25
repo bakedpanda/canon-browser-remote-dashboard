@@ -94,22 +94,41 @@ function baseUrl(config) {
 }
 
 /**
- * Login to a camera and store the session cookie.
- * Canon XF login: GET /api/acnt/login?uname=<user>&pw=<pass>
+ * Build headers for every camera request.
+ * Canon XF web server requires HTTP Basic Auth on all endpoints.
+ * Session cookie is appended when available (some firmware needs it).
+ */
+function cameraHeaders(session) {
+  const { config } = session;
+  const cred = Buffer.from(`${config.username}:${config.password}`).toString('base64');
+  const headers = { Authorization: `Basic ${cred}` };
+  if (session.cookie) headers.Cookie = session.cookie;
+  return headers;
+}
+
+/**
+ * Login to a camera.
+ * Sends Basic Auth + query-string credentials to /api/acnt/login,
+ * then stores any session cookie returned for subsequent requests.
  */
 async function login(session) {
   const { config } = session;
   const url = `${baseUrl(config)}/api/acnt/login?uname=${encodeURIComponent(config.username)}&pw=${encodeURIComponent(config.password)}`;
   try {
-    const res = await fetch(url, { timeout: 5000 });
+    const res = await fetch(url, {
+      headers: cameraHeaders(session),
+      timeout: 5000,
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const data = await res.json();
     if (data.res !== 'ok') throw new Error(`Login rejected: ${data.res}`);
 
-    // Capture all Set-Cookie headers and join for subsequent requests
+    // Store session cookie if the camera issues one
     const rawCookies = res.headers.raw()['set-cookie'] || [];
-    session.cookie = rawCookies.map((c) => c.split(';')[0]).join('; ');
+    if (rawCookies.length) {
+      session.cookie = rawCookies.map((c) => c.split(';')[0]).join('; ');
+    }
     session.connected = true;
     console.log(`[${config.id}] Logged in to ${config.ip}`);
     return true;
@@ -129,13 +148,12 @@ async function fetchStatus(session) {
   const url = `${baseUrl(config)}/api/cam/getcurprop`;
   try {
     const res = await fetch(url, {
-      headers: { Cookie: session.cookie || '' },
+      headers: cameraHeaders(session),
       timeout: 4000,
     });
 
     if (res.status === 401 || res.status === 403) {
-      // Session expired — try re-login
-      console.log(`[${config.id}] Session expired, re-logging in…`);
+      console.log(`[${config.id}] Auth rejected, re-logging in…`);
       session.connected = false;
       session.cookie = null;
       await login(session);
@@ -159,7 +177,6 @@ async function fetchStatus(session) {
         if (p.k !== undefined) flat[p.k] = p.v;
       });
     } else if (typeof data === 'object') {
-      // Some firmware returns a flat object
       Object.assign(flat, data);
     }
 
@@ -179,12 +196,12 @@ async function fetchStatus(session) {
  */
 async function sendCommand(session, cmd) {
   const { config } = session;
-  if (!session.connected || !session.cookie) {
+  if (!session.connected) {
     throw new Error('Camera not connected');
   }
   const url = `${baseUrl(config)}/api/cam/${cmd}`;
   const res = await fetch(url, {
-    headers: { Cookie: session.cookie || '' },
+    headers: cameraHeaders(session),
     timeout: 5000,
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
