@@ -226,10 +226,10 @@ async function sendCommand(session, cmd) {
 
 async function startPolling(session) {
   if (session.pollTimer) return;
+  session.polling = true;  // mark active BEFORE the delay so stopPolling() can cancel it
   // Brief delay so the camera session settles after login
   await new Promise(r => setTimeout(r, LOGIN_SETTLE_MS));
   if (!session.polling) return; // disconnected while waiting
-  session.polling  = true;
   session.pollTimer = setInterval(() => fetchStatus(session), POLL_INTERVAL);
   fetchStatus(session);
 }
