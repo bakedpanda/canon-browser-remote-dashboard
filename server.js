@@ -97,13 +97,14 @@ function cameraHeaders(session) {
 async function login(session) {
   const { config } = session;
 
-  // Clear any existing session to avoid errsession
+  // Logout first – send WITHOUT a cookie so the camera kicks any active session,
+  // not just ours.  This is the most reliable way to clear a competing client.
+  const logoutHeaders = {
+    Authorization: `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`,
+  };
   try {
-    await fetch(`${baseUrl(config)}/api/acnt/logout`, {
-      headers: cameraHeaders(session),
-      timeout: 2000,
-    });
-    await new Promise(r => setTimeout(r, 200));
+    await fetch(`${baseUrl(config)}/api/acnt/logout`, { headers: logoutHeaders, timeout: 3000 });
+    await new Promise(r => setTimeout(r, 400)); // give camera time to clear the slot
   } catch (_) {}
 
   const url = `${baseUrl(config)}/api/acnt/login`
@@ -111,7 +112,7 @@ async function login(session) {
     + `&pw=${encodeURIComponent(config.password)}`;
 
   try {
-    const res = await fetch(url, { headers: cameraHeaders(session), timeout: 5000 });
+    const res = await fetch(url, { headers: logoutHeaders, timeout: 5000 });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const data = await res.json();
@@ -185,12 +186,14 @@ async function fetchStatus(session) {
       const data = await res.json();
 
       if (data.res === 'errsession') {
+        console.log(`[${config.id}] Session expired mid-poll – re-logging in`);
         session.connected = false;
         session.cookie    = null;
         session.statusEndpoint = null;
         session._debugLogged   = false;
         await login(session);
-        return;
+        // Back off 3 s after re-login to let the camera settle
+        return 3000;
       }
 
       if (data.res === 'failparam') {
@@ -199,15 +202,17 @@ async function fetchStatus(session) {
       }
 
       if (data.res === 'busy') {
-        // A previous long-poll is still held open on the camera side.
-        // Record getcurprop as the confirmed endpoint so we use 35s timeout
-        // next time, which will outlast the camera's 30s hold.
+        // Another client holds the long-poll slot.  Record the endpoint and
+        // back off for 6 s to give the competing request time to expire,
+        // rather than hammering the camera every second.
         if (!session.statusEndpoint && epIsLongPoll) {
           session.statusEndpoint = endpoint.split('?')[0];
-          console.log(`[${config.id}] Long-poll endpoint confirmed (busy): ${session.statusEndpoint} – waiting for camera to free slot…`);
+          console.log(`[${config.id}] Long-poll endpoint confirmed (busy): ${session.statusEndpoint} – backing off 6 s…`);
+        } else {
+          console.log(`[${config.id}] Camera busy – backing off 6 s…`);
         }
-        // Do NOT mark disconnected – camera is reachable, just temporarily busy.
-        return;
+        // Do NOT mark disconnected; return 6 s backoff hint.
+        return 6000;
       }
 
       // Any other non-ok result → skip this candidate
@@ -284,12 +289,12 @@ async function startPolling(session) {
   await new Promise(r => setTimeout(r, LOGIN_SETTLE_MS));
 
   // Sequential poll loop – waits for each response before scheduling the next.
-  // This avoids "busy" errors that occur when a second request arrives while
-  // a long-poll (getcurprop) is still holding the connection open.
+  // fetchStatus returns a delay hint (ms) when it wants to back off
+  // (e.g. camera slot busy, or session conflict).
   while (session.polling) {
-    await fetchStatus(session);
+    const delay = await fetchStatus(session) || POLL_INTERVAL;
     if (session.polling) {
-      await new Promise(r => setTimeout(r, POLL_INTERVAL));
+      await new Promise(r => setTimeout(r, delay));
     }
   }
 }
