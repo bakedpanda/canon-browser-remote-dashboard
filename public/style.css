@@ -399,17 +399,13 @@ body {
   color: var(--text);
   border: 1px solid var(--border);
 }
-.btn-record:hover { border-color: var(--red); color: var(--red); }
+.btn-record:hover { background: var(--border); }
 .btn-record.is-recording {
-  background: var(--red);
+  background: #e02020;
   color: #fff;
-  border-color: var(--red);
-  animation: var(--rec-pulse);
+  border-color: #e02020;
 }
-.btn-record.is-recording:hover {
-  background: #c43a3a;
-  animation: none;
-}
+.btn-record.is-recording:hover { background: #c01a1a; }
 
 /* nudge buttons (iris, zoom, focus) */
 .nudge-pair {
