@@ -7,6 +7,9 @@ npm-debug.log*
 *.png
 *.jpg
 *.jpeg
+*.PNG
+*.JPG
+Screenshot*
 .git
 .gitignore
 README.md

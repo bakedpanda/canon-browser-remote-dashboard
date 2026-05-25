@@ -83,28 +83,61 @@ function baseUrl(config) {
   return `http://${config.ip}`;
 }
 
-function cameraHeaders(session) {
+function cameraHeaders(session, extra = {}) {
   const { config } = session;
   const cred = Buffer.from(`${config.username}:${config.password}`).toString('base64');
-  const h = { Authorization: `Basic ${cred}` };
+  const h = { Authorization: `Basic ${cred}`, ...extra };
   if (session.cookie) h.Cookie = session.cookie;
   return h;
+}
+
+/** Headers specifically for getcurprop – mirror what the browser sends */
+function pollHeaders(session) {
+  // Extract productId from cookie so we can build the correct Referer
+  const productId = (session.cookie || '').match(/productId=([^;]+)/)?.[1] || '';
+  const referer   = productId
+    ? `http://${session.config.ip}/wpd/${productId}/rc/advanced.htm`
+    : `http://${session.config.ip}/`;
+  return cameraHeaders(session, {
+    'If-Modified-Since': 'Thu, 01 Jun 1970 00:00:00 GMT',
+    'Referer':           referer,
+  });
 }
 
 /**
  * Login.  Attempts logout first to clear any stale session (errsession).
  */
+/** Extract Set-Cookie values from a fetch response into a cookie string */
+function extractCookies(res) {
+  return (res.headers.raw()['set-cookie'] || [])
+    .map(c => c.split(';')[0])
+    .filter(Boolean)
+    .join('; ');
+}
+
+/** Merge two cookie strings, later values override earlier ones */
+function mergeCookies(base, overlay) {
+  const map = new Map();
+  for (const part of (base + '; ' + overlay).split(';')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    map.set(trimmed.slice(0, eq).trim(), trimmed);
+  }
+  return [...map.values()].join('; ');
+}
+
 async function login(session) {
   const { config } = session;
+  const basicAuth = `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`;
 
-  // Logout first – send WITHOUT a cookie so the camera kicks any active session,
-  // not just ours.  This is the most reliable way to clear a competing client.
-  const logoutHeaders = {
-    Authorization: `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`,
-  };
+  // Logout first to clear any competing session
   try {
-    await fetch(`${baseUrl(config)}/api/acnt/logout`, { headers: logoutHeaders, timeout: 3000 });
-    await new Promise(r => setTimeout(r, 400)); // give camera time to clear the slot
+    const h = { Authorization: basicAuth };
+    if (session.cookie) h.Cookie = session.cookie;
+    await fetch(`${baseUrl(config)}/api/acnt/logout`, { headers: h, timeout: 3000 });
+    await new Promise(r => setTimeout(r, 400));
   } catch (_) {}
 
   const url = `${baseUrl(config)}/api/acnt/login`
@@ -112,18 +145,15 @@ async function login(session) {
     + `&pw=${encodeURIComponent(config.password)}`;
 
   try {
-    const res = await fetch(url, { headers: logoutHeaders, timeout: 5000 });
+    const res = await fetch(url, { headers: { Authorization: basicAuth }, timeout: 5000 });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const data = await res.json();
     if (data.res !== 'ok') throw new Error(`Login rejected: ${data.res}`);
 
-    const rawCookies = res.headers.raw()['set-cookie'] || [];
-    if (rawCookies.length) {
-      session.cookie = rawCookies.map(c => c.split(';')[0]).join('; ');
-    }
+    session.cookie = extractCookies(res);
     session.connected = true;
-    console.log(`[${config.id}] ✓ Logged in to ${config.ip}`);
+    console.log(`[${config.id}] ✓ Logged in to ${config.ip} | cookie: ${session.cookie}`);
     return true;
   } catch (err) {
     console.warn(`[${config.id}] Login failed: ${err.message}`);
@@ -154,13 +184,16 @@ async function fetchStatus(session) {
   const isLongPoll = !base || base.includes('getcurprop');
   const timeout = isLongPoll ? 35000 : 8000;
 
+  // IMPORTANT: do NOT include '/api/cam/getcurprop' (without seq) in the discovery
+  // list.  The camera registers it as a long-poll attempt internally before returning
+  // 'failparam', leaving the slot occupied for a moment.  The very next request
+  // (getcurprop?seq=0) then gets 'busy' — a self-inflicted conflict.
   const candidates = base
     ? [`${base}?seq=${session.seq}`, base]
     : [
         `/api/cam/getprop`,
         `/api/cam/getprop?seq=${session.seq}`,
-        `/api/cam/getcurprop`,
-        `/api/cam/getcurprop?seq=${session.seq}`,
+        `/api/cam/getcurprop?seq=${session.seq}`,   // skip bare getcurprop – always failparam + poisons slot
       ];
 
   for (const endpoint of candidates) {
@@ -168,7 +201,7 @@ async function fetchStatus(session) {
     const epIsLongPoll = endpoint.includes('getcurprop');
     try {
       const res = await fetch(url, {
-        headers: cameraHeaders(session),
+        headers: epIsLongPoll ? pollHeaders(session) : cameraHeaders(session),
         timeout: epIsLongPoll ? 35000 : 8000,
       });
 
