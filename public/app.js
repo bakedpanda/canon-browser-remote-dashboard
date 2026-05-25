@@ -165,7 +165,8 @@ function renderCam(camId) {
   // Body
   const body = panel.querySelector('.cam-body');
   if (!connected) {
-    body.innerHTML = disconnectedHTML(config);
+    body.innerHTML = disconnectedHTML(config, camId);
+    attachBodyListeners(camId, panel);
     return;
   }
 
@@ -173,7 +174,8 @@ function renderCam(camId) {
   attachBodyListeners(camId, panel);
 }
 
-function disconnectedHTML(config) {
+function disconnectedHTML(config, camId) {
+  const hasIp = Boolean(config.ip);
   return `
     <div class="cam-placeholder">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -181,7 +183,10 @@ function disconnectedHTML(config) {
         <path d="M4 8l2-2h12l2 2v8l-2 2H6l-2-2V8z"/>
         <line x1="3" y1="3" x2="21" y2="21" stroke-width="1.5"/>
       </svg>
-      <p>${config.ip ? `Connecting to ${config.ip}…` : 'No camera configured'}</p>
+      <p>${hasIp ? `Connecting to ${config.ip}…` : 'No camera configured'}</p>
+      <button class="btn btn-primary btn-connect-panel" data-action="connect" data-camid="${camId}">
+        Connect
+      </button>
     </div>`;
 }
 
@@ -358,6 +363,13 @@ function connectedHTML(camId, s, recording, config) {
           Full Auto ${fullAuto ? 'ON' : 'OFF'}
         </button>
       </div>
+
+      <!-- Disconnect -->
+      <div class="controls-row controls-row-disconnect">
+        <button class="btn btn-disconnect" data-action="disconnect" data-camid="${camId}">
+          Disconnect
+        </button>
+      </div>
     </div>
   `;
 }
@@ -375,6 +387,17 @@ function batteryIcon(pct) {
   </svg>`;
 }
 
+// Shared disconnect logic used by both the modal and in-panel button
+async function doDisconnect(camId) {
+  await apiDisconnect(camId);
+  state.cameras[camId].connected = false;
+  state.cameras[camId].status    = {};
+  state.cameras[camId].config.ip = '';
+  deleteConfig(camId);
+  updateGridLayout();
+  renderCam(camId);
+}
+
 // Attach event listeners to dynamically rendered body controls
 function attachBodyListeners(camId, panel) {
   panel.querySelectorAll('[data-cmd]').forEach((el) => {
@@ -383,6 +406,16 @@ function attachBodyListeners(camId, panel) {
       const cmd    = el.dataset.cmd;
       const target = el.dataset.camid;
       apiCommand(target, cmd).catch(console.error);
+    });
+  });
+
+  panel.querySelectorAll('[data-action]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const action = el.dataset.action;
+      const target = el.dataset.camid;
+      if (action === 'connect')    openModal(target);
+      if (action === 'disconnect') doDisconnect(target).catch(console.error);
     });
   });
 }
@@ -528,13 +561,7 @@ function init() {
     const camId = _modalCamId;
     closeModal();
     if (!camId) return;
-    await apiDisconnect(camId);
-    state.cameras[camId].connected = false;
-    state.cameras[camId].status    = {};
-    state.cameras[camId].config.ip = '';
-    deleteConfig(camId);
-    updateGridLayout();
-    renderCam(camId);
+    doDisconnect(camId).catch(console.error);
   });
 
   // Layout toggle button
