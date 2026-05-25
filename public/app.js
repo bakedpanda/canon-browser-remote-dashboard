@@ -132,16 +132,52 @@ function getPanel(camId) {
   return document.getElementById(`panel-${camId}`);
 }
 
+// Resolve a value from a status object trying multiple possible key names
+function val(s, ...keys) {
+  for (const k of keys) {
+    const v = s[k];
+    if (v !== undefined && v !== null && v !== '') return String(v);
+  }
+  return '—';
+}
+
 function isRecording(status) {
-  return String(status.rec || '').toLowerCase() === 'rec';
+  const r = val(status, 'rec', 'Rec', 'record', 'Record', 'r').toLowerCase();
+  return r === 'rec' || r === 'recording' || r === 'true';
+}
+
+// Parse "H:MM:SS" or "H:MM" → total minutes. Returns Infinity if unparseable.
+function parseRemainingToMinutes(str) {
+  if (!str || str === '—') return Infinity;
+  const parts = str.split(':').map(Number);
+  if (parts.some(isNaN)) return Infinity;
+  if (parts.length === 3) return parts[0] * 60 + parts[1];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return Infinity;
 }
 
 function batteryClass(pct) {
   const n = parseInt(pct, 10);
   if (isNaN(n)) return '';
-  if (n <= 10) return 'critical';
-  if (n <= 25) return 'low';
+  if (n <= 10) return 'batt-critical';
+  if (n <= 25) return 'batt-low';
   return '';
+}
+
+function updateHeaderIndicators() {
+  const el = document.getElementById('cam-rec-indicators');
+  if (!el) return;
+  el.innerHTML = CAM_IDS.map((camId) => {
+    const cam = state.cameras[camId];
+    if (!cam || !cam.config.ip) return '';
+    const rec  = cam.connected && isRecording(cam.status);
+    const live = cam.connected && !rec;
+    const cls  = rec ? 'hdr-rec' : live ? 'hdr-live' : 'hdr-off';
+    return `<div class="hdr-cam ${cls}">
+      <span class="hdr-dot"></span>
+      <span class="hdr-label">${cam.config.label}</span>
+    </div>`;
+  }).join('');
 }
 
 function renderCam(camId) {
@@ -172,6 +208,7 @@ function renderCam(camId) {
 
   body.innerHTML = connectedHTML(camId, status, recording, config);
   attachBodyListeners(camId, panel);
+  updateHeaderIndicators();
 }
 
 function disconnectedHTML(config, camId) {
@@ -191,201 +228,137 @@ function disconnectedHTML(config, camId) {
 }
 
 function connectedHTML(camId, s, recording, config) {
-  // ── Timecode & recording ──
-  const tc   = s.tc   || s.timecode    || '—';
-  const batt = s.battery_percent !== undefined
-    ? `${s.battery_percent}%`
-    : s.batt || '—';
-  const battCls = batteryClass(s.battery_percent);
+  // ── Resolve status values (tries multiple key names across firmware versions) ──
+  const tc       = val(s, 'tc', 'TC', 'timecode', 'TimeCode');
+  const battPct  = s.battery_percent ?? s.batteryPercent ?? null;
+  const battStr  = battPct !== null ? `${battPct}%` : val(s, 'batt', 'battery', 'Battery');
+  const battCls  = batteryClass(battPct);
 
-  // ── SD cards ──
-  const sdAState  = s.sdcard_a_state    || '—';
-  const sdARemain = s.sdcard_a_remaining || '—';
-  const sdBState  = s.sdcard_b_state    || '—';
-  const sdBRemain = s.sdcard_b_remaining || '—';
+  const iris     = val(s, 'iris_value', 'iris', 'av', 'Iris');
+  const gainLbl  = val(s, 'isogain_mode', 'gain_mode', 'gcm').toLowerCase() === 'iso' ? 'ISO' : 'Gain';
+  const gain     = val(s, 'isogain_value', 'gain_value', 'gcv', 'Gain');
+  const shutter  = val(s, 'shutter_value', 'ssv', 'Shutter');
+  const ndRaw    = s.neutraldensity_value ?? s.nd_value ?? s.nd ?? null;
+  const nd       = ndRaw !== null ? `ND${ndRaw}` : '—';
+  const wbMode   = val(s, 'wb_mode', 'wbm', 'WhiteBalance');
+  const wbK      = val(s, 'kelvinvalue', 'awb_kelvinvalue', 'wb_value', 'wbv', 'Kelvin');
+  const wbStr    = wbK !== '—' ? `${wbMode} ${wbK}K` : wbMode;
+  const afMode   = val(s, 'afmode', 'af_mode', 'afm', 'AF');
+  const fullAuto = val(s, 'fullauto', 'FullAuto').toLowerCase() === 'on';
+  const recFmt   = val(s, 'rec_fmt', 'recfmt', 'RecFormat', 'format');
 
-  // ── Exposure ──
-  const iris   = s.iris_value   || s.iris   || '—';
-  const gain   = s.isogain_value || s.gain_value || '—';
-  const gainMode = s.isogain_mode || s.gain_mode || '';
-  const shutter = s.shutter_value || '—';
-  const shutMode = s.shutter_mode || '';
-  const nd       = s.neutraldensity_value;
-  const ndStr    = nd !== undefined ? `ND${nd}` : '—';
+  const sdAState  = val(s, 'sdcard_a_state',     'sdA_state',  'SlotAState');
+  const sdARemain = val(s, 'sdcard_a_remaining',  'sdA_remain', 'SlotARemain');
+  const sdBState  = val(s, 'sdcard_b_state',     'sdB_state',  'SlotBState');
+  const sdBRemain = val(s, 'sdcard_b_remaining',  'sdB_remain', 'SlotBRemain');
+  const sdAActive = sdAState.toLowerCase().includes('rec');
+  const sdBActive = sdBState.toLowerCase().includes('rec');
 
-  // ── White balance ──
-  const wbMode = s.wb_mode  || s.wbm  || '—';
-  const wbK    = s.kelvinvalue || s.awb_kelvinvalue || s.wb_value || '';
-  const wbStr  = wbK ? `${wbMode} ${wbK}K` : wbMode;
-
-  // ── Focus / Zoom ──
-  const afMode    = s.afmode || s.af_mode || '—';
-  const zoomPos   = s.zoom_position !== undefined ? s.zoom_position : '—';
-  const recFmt    = s.rec_fmt || '—';
-  const fullAuto  = (s.fullauto || '').toLowerCase() === 'on';
+  // Record time remaining (active slot when recording, otherwise show both)
+  const activeRemain = sdAActive ? sdARemain : sdBActive ? sdBRemain
+                     : sdARemain !== '—' ? sdARemain : sdBRemain;
+  const remainMins   = parseRemainingToMinutes(activeRemain);
+  const remainCls    = remainMins <= 10 ? 'remain-critical'
+                     : remainMins <= 30 ? 'remain-warning' : '';
 
   return `
-    <!-- Status strip -->
-    <div class="status-strip">
-      <span class="rec-badge ${recording ? 'is-recording' : ''}">
-        <span class="rec-dot"></span>
-        ${recording ? 'REC' : 'STBY'}
-      </span>
-      <span class="tc-display">${tc}</span>
-      <span class="battery-badge ${battCls}">
-        ${batteryIcon(parseInt(s.battery_percent, 10))}
-        ${batt}
-      </span>
-    </div>
-
-    <!-- SD cards -->
-    <div class="sdcard-row">
-      <div class="sdcard-badge ${sdAState.toLowerCase().includes('rec') ? 'active-slot' : ''}">
-        <div class="sd-label">Slot A</div>
-        <div class="sd-remain">${sdARemain}</div>
+    <!-- ── Recording strip (full-width, red when rolling) ── -->
+    <div class="rec-strip ${recording ? 'is-recording' : ''}">
+      <div class="rec-strip-left">
+        <span class="rec-dot-el"></span>
+        <span class="rec-strip-lbl">${recording ? 'REC' : 'STBY'}</span>
+        <span class="rec-tc">${tc}</span>
       </div>
-      <div class="sdcard-badge ${sdBState.toLowerCase().includes('rec') ? 'active-slot' : ''}">
-        <div class="sd-label">Slot B</div>
-        <div class="sd-remain">${sdBRemain}</div>
+      <div class="rec-strip-right">
+        <span class="${battCls}">${battStr}</span>
+        ${recFmt !== '—' ? `<span class="rec-fmt">${recFmt}</span>` : ''}
       </div>
     </div>
 
-    <!-- Settings readout -->
-    <div class="settings-grid">
-      <div class="setting-cell">
-        <div class="s-label">Iris</div>
-        <div class="s-value">${iris}</div>
-      </div>
-      <div class="setting-cell">
-        <div class="s-label">${gainMode === 'iso' ? 'ISO' : 'Gain'}</div>
-        <div class="s-value">${gain}</div>
-      </div>
-      <div class="setting-cell">
-        <div class="s-label">Shutter</div>
-        <div class="s-value">${shutter}</div>
-      </div>
-      <div class="setting-cell">
-        <div class="s-label">ND</div>
-        <div class="s-value">${ndStr}</div>
-      </div>
-      <div class="setting-cell">
-        <div class="s-label">WB</div>
-        <div class="s-value" title="${wbStr}">${wbStr}</div>
-      </div>
-      <div class="setting-cell">
-        <div class="s-label">Format</div>
-        <div class="s-value">${recFmt}</div>
-      </div>
-      <div class="setting-cell">
-        <div class="s-label">AF Mode</div>
-        <div class="s-value">${afMode}</div>
-      </div>
-      <div class="setting-cell">
-        <div class="s-label">Zoom</div>
-        <div class="s-value">${zoomPos}</div>
-      </div>
-    </div>
+    <!-- ── Compact control grid (value shown inline with buttons) ── -->
+    <div class="ctrl-grid">
 
-    <!-- Controls -->
-    <div class="controls-section">
-      <!-- Record -->
-      <div class="controls-row">
-        <button class="btn btn-record ${recording ? 'is-recording' : ''}" data-cmd="rec?cmd=trig" data-camid="${camId}">
-          ${recording ? '⏹ STOP' : '⏺ RECORD'}
-        </button>
-        <button class="btn btn-sm btn-outline" data-cmd="rec?cmd=slot" data-camid="${camId}" title="Switch SD slot">
-          SD Slot
-        </button>
-      </div>
-
-      <!-- Iris -->
-      <div class="controls-row">
-        <span class="ctrl-label">Iris</span>
+      <div class="ctrl-row">
+        <span class="cl">Iris</span>
+        <span class="cv">${iris}</span>
         <div class="nudge-pair">
-          <button class="btn" data-cmd="drivelens?iris=minus" data-camid="${camId}" title="Iris close">−</button>
-          <button class="btn" data-cmd="drivelens?iris=plus"  data-camid="${camId}" title="Iris open">+</button>
+          <button class="btn" data-cmd="drivelens?iris=minus" data-camid="${camId}">−</button>
+          <button class="btn" data-cmd="drivelens?iris=plus"  data-camid="${camId}">+</button>
         </div>
         <button class="btn btn-xs btn-outline" data-cmd="drivelens?ai=push" data-camid="${camId}">Auto</button>
-      </div>
-
-      <!-- Gain -->
-      <div class="controls-row">
-        <span class="ctrl-label">Gain</span>
+        <span class="cs"></span>
+        <span class="cl">${gainLbl}</span>
+        <span class="cv">${gain}</span>
         <div class="nudge-pair">
-          <button class="btn" data-cmd="drivelens?gain=minus" data-camid="${camId}" title="Gain down">−</button>
-          <button class="btn" data-cmd="drivelens?gain=plus"  data-camid="${camId}" title="Gain up">+</button>
+          <button class="btn" data-cmd="drivelens?gain=minus" data-camid="${camId}">−</button>
+          <button class="btn" data-cmd="drivelens?gain=plus"  data-camid="${camId}">+</button>
         </div>
       </div>
 
-      <!-- ND -->
-      <div class="controls-row">
-        <span class="ctrl-label">ND</span>
+      <div class="ctrl-row">
+        <span class="cl">ND</span>
+        <span class="cv">${nd}</span>
         <div class="nudge-pair">
           <button class="btn" data-cmd="drivelens?nd=down" data-camid="${camId}">−</button>
           <button class="btn" data-cmd="drivelens?nd=up"   data-camid="${camId}">+</button>
         </div>
+        <span class="cs"></span>
+        <span class="cl">Shut</span>
+        <span class="cv">${shutter}</span>
       </div>
 
-      <!-- Focus -->
-      <div class="controls-row">
-        <span class="ctrl-label">Focus</span>
+      <div class="ctrl-row">
+        <span class="cl">WB</span>
+        <span class="cv wb-val">${wbStr}</span>
+        <button class="btn btn-xs btn-outline" data-cmd="cmdwb?awbhold=trig"     data-camid="${camId}">AWB</button>
+        <button class="btn btn-xs btn-outline" data-cmd="setprop?wbm=daylight"   data-camid="${camId}">Day</button>
+        <button class="btn btn-xs btn-outline" data-cmd="setprop?wbm=tungsten"   data-camid="${camId}">Tung</button>
+      </div>
+
+      <div class="ctrl-row">
+        <span class="cl">Focus</span>
         <div class="nudge-pair">
-          <button class="btn" data-cmd="drivelens?fl=3" data-camid="${camId}" title="Focus near">Near</button>
-          <button class="btn" data-cmd="drivelens?fl=-3" data-camid="${camId}" title="Focus far">Far</button>
+          <button class="btn" data-cmd="drivelens?fl=3"  data-camid="${camId}">N</button>
+          <button class="btn" data-cmd="drivelens?fl=-3" data-camid="${camId}">F</button>
         </div>
-        <button class="btn btn-xs btn-outline" data-cmd="drivelens?sw=afmode" data-camid="${camId}" title="Toggle AF">AF</button>
-        <button class="btn btn-xs btn-outline" data-cmd="drivelens?af=togglelock" data-camid="${camId}" title="AF lock">Lock</button>
-      </div>
-
-      <!-- Zoom -->
-      <div class="controls-row">
-        <span class="ctrl-label">Zoom</span>
+        <span class="cl af-cl">${afMode}</span>
+        <button class="btn btn-xs btn-outline" data-cmd="drivelens?sw=afmode"     data-camid="${camId}">AF</button>
+        <button class="btn btn-xs btn-outline" data-cmd="drivelens?af=togglelock" data-camid="${camId}">Lock</button>
+        <span class="cs"></span>
+        <span class="cl">Zoom</span>
         <div class="nudge-pair">
-          <button class="btn" data-cmd="drivelens?zoom=wide"  data-camid="${camId}" title="Zoom out">W</button>
-          <button class="btn" data-cmd="drivelens?zoom=tele"  data-camid="${camId}" title="Zoom in">T</button>
+          <button class="btn" data-cmd="drivelens?zoom=wide" data-camid="${camId}">W</button>
+          <button class="btn" data-cmd="drivelens?zoom=tele" data-camid="${camId}">T</button>
         </div>
       </div>
 
-      <!-- WB -->
-      <div class="controls-row">
-        <span class="ctrl-label">WB</span>
-        <button class="btn btn-xs btn-outline" data-cmd="cmdwb?awbhold=trig" data-camid="${camId}">AWB</button>
-        <button class="btn btn-xs btn-outline" data-cmd="setprop?wbm=daylight"  data-camid="${camId}">Day</button>
-        <button class="btn btn-xs btn-outline" data-cmd="setprop?wbm=tungsten"  data-camid="${camId}">Tung</button>
+      <!-- Record row -->
+      <div class="ctrl-row rec-row">
+        <button class="btn btn-record ${recording ? 'is-recording' : ''}" data-cmd="rec?cmd=trig" data-camid="${camId}">
+          <span class="rec-btn-dot"></span> REC
+        </button>
+        ${activeRemain !== '—' ? `<span class="remain-time ${remainCls}">${activeRemain}</span>` : ''}
+        <span class="cs"></span>
+        <span class="cl">SD</span>
+        <span class="cv sd-val ${sdAActive ? 'sd-active' : ''}">A ${sdARemain}</span>
+        <span class="cv sd-val ${sdBActive ? 'sd-active' : ''}">B ${sdBRemain}</span>
+        <button class="btn btn-xs btn-outline" data-cmd="rec?cmd=slot" data-camid="${camId}">Swap</button>
       </div>
 
-      <!-- Full Auto -->
-      <div class="controls-row">
-        <span class="ctrl-label">Auto</span>
+      <!-- Bottom row -->
+      <div class="ctrl-row bottom-row">
         <button class="btn btn-xs ${fullAuto ? 'btn-primary' : 'btn-outline'}"
-                data-cmd="setprop?fullauto=${fullAuto ? 'off' : 'on'}"
-                data-camid="${camId}">
+                data-cmd="setprop?fullauto=${fullAuto ? 'off' : 'on'}" data-camid="${camId}">
           Full Auto ${fullAuto ? 'ON' : 'OFF'}
         </button>
+        <span class="cs"></span>
+        <button class="btn btn-xs btn-disconnect" data-action="disconnect" data-camid="${camId}">Disconnect</button>
       </div>
 
-      <!-- Disconnect -->
-      <div class="controls-row controls-row-disconnect">
-        <button class="btn btn-disconnect" data-action="disconnect" data-camid="${camId}">
-          Disconnect
-        </button>
-      </div>
     </div>
   `;
 }
 
-function batteryIcon(pct) {
-  const fill = isNaN(pct) ? 0 : Math.round(pct / 25) * 25;
-  const bars = Math.round(fill / 25);
-  return `<svg width="16" height="10" viewBox="0 0 16 10" fill="none" stroke="currentColor" stroke-width="1.2">
-    <rect x=".6" y=".6" width="12.8" height="8.8" rx="1.5"/>
-    <path d="M13.4 3.5v3" stroke-width="1.5"/>
-    ${bars >= 1 ? '<rect x="1.8" y="1.8" width="2.2" height="6.4" rx=".5" fill="currentColor" stroke="none"/>' : ''}
-    ${bars >= 2 ? '<rect x="4.9" y="1.8" width="2.2" height="6.4" rx=".5" fill="currentColor" stroke="none"/>' : ''}
-    ${bars >= 3 ? '<rect x="8.0" y="1.8" width="2.2" height="6.4" rx=".5" fill="currentColor" stroke="none"/>' : ''}
-    ${bars >= 4 ? '<rect x="11.1" y="1.8" width="1.5" height="6.4" rx=".5" fill="currentColor" stroke="none"/>' : ''}
-  </svg>`;
-}
 
 // Shared disconnect logic used by both the modal and in-panel button
 async function doDisconnect(camId) {
@@ -510,9 +483,9 @@ function init() {
   });
 
   buildPanels();
-  // Populate every panel body immediately (shows Connect button for unconfigured slots)
   CAM_IDS.forEach((id) => renderCam(id));
   updateGridLayout();
+  updateHeaderIndicators();
 
   // Modal events
   document.getElementById('modal-close').addEventListener('click', closeModal);
@@ -556,6 +529,16 @@ function init() {
     closeModal();
     if (!camId) return;
     doDisconnect(camId).catch(console.error);
+  });
+
+  // REC ALL — trigger record on every connected camera
+  document.getElementById('btn-rec-all').addEventListener('click', () => {
+    CAM_IDS.forEach((camId) => {
+      const cam = state.cameras[camId];
+      if (cam && cam.connected) {
+        apiCommand(camId, 'rec?cmd=trig').catch(console.error);
+      }
+    });
   });
 
   // Layout toggle button

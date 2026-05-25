@@ -170,6 +170,12 @@ async function fetchStatus(session) {
       return;
     }
 
+    // Log raw response once per camera for debugging
+    if (!session._debugLogged) {
+      console.log(`[${config.id}] Raw getcurprop:`, JSON.stringify(data).slice(0, 800));
+      session._debugLogged = true;
+    }
+
     // Flatten the property list into a simple key→value map
     const flat = {};
     if (Array.isArray(data.prop)) {
@@ -304,6 +310,20 @@ app.post('/api/command', async (req, res) => {
 
   try {
     const data = await sendCommand(session, cmd);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /api/rawstatus/:camId  – raw getcurprop response for debugging */
+app.get('/api/rawstatus/:camId', async (req, res) => {
+  const session = cameras.get(req.params.camId);
+  if (!session) return res.status(404).json({ error: 'Camera not found' });
+  try {
+    const url = `${baseUrl(session.config)}/api/cam/getcurprop`;
+    const r = await fetch(url, { headers: cameraHeaders(session), timeout: 4000 });
+    const data = await r.json();
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
