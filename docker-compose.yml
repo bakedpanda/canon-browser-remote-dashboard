@@ -1,0 +1,15 @@
+services:
+  dashboard:
+    build: .
+    image: canon-remote-dashboard
+    container_name: canon-dashboard
+    restart: unless-stopped
+    ports:
+      - "8847:8847"
+    environment:
+      - PORT=8847
+    # The container needs to reach cameras on your LAN.
+    # host networking is the simplest option on Linux.
+    # On Mac/Windows Docker Desktop, the default bridge works fine
+    # because Docker Desktop routes LAN traffic automatically.
+    network_mode: bridge
