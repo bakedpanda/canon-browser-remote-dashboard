@@ -139,11 +139,20 @@ async function login(session) {
 async function fetchStatus(session) {
   const { config } = session;
 
-  // Build candidate list.
-  // Prefer getprop (returns immediately) over getcurprop (long-poll, can return "busy"
-  // if a previous request is still pending).  Store only the base path so the seq
-  // parameter can be appended dynamically each call.
-  const base = session.statusEndpoint; // e.g. '/api/cam/getprop' – no query string
+  // Canon Browser Remote uses long-polling via getcurprop:
+  //   seq=0  → camera responds immediately with ALL current properties
+  //   seq=N  → camera holds the connection until something changes (up to ~30s)
+  //            then returns only the CHANGED properties (delta)
+  //
+  // 'busy' means one long-poll is already pending on the camera – we must
+  // wait for it to expire (~30s) before the slot is free again.
+  // Fix: use a 35-second timeout so we always outlast the camera's own
+  // 30-second hold, preventing the busy cycle.
+
+  const base = session.statusEndpoint; // base path, e.g. '/api/cam/getcurprop'
+  const isLongPoll = !base || base.includes('getcurprop');
+  const timeout = isLongPoll ? 35000 : 8000;
+
   const candidates = base
     ? [`${base}?seq=${session.seq}`, base]
     : [
@@ -155,10 +164,11 @@ async function fetchStatus(session) {
 
   for (const endpoint of candidates) {
     const url = `${baseUrl(config)}${endpoint}`;
+    const epIsLongPoll = endpoint.includes('getcurprop');
     try {
       const res = await fetch(url, {
         headers: cameraHeaders(session),
-        timeout: 8000,
+        timeout: epIsLongPoll ? 35000 : 8000,
       });
 
       if (res.status === 401 || res.status === 403) {
@@ -183,21 +193,30 @@ async function fetchStatus(session) {
         return;
       }
 
-      // 'busy' means a long-poll request is still in flight – skip this candidate.
-      // 'failparam' means wrong endpoint/params for this firmware.
-      if (data.res === 'busy' || data.res === 'failparam') {
-        if (data.res === 'failparam') console.log(`[${config.id}] ${endpoint} → failparam, trying next…`);
+      if (data.res === 'failparam') {
+        console.log(`[${config.id}] ${endpoint} → failparam, trying next…`);
         continue;
       }
 
-      // Any non-ok result we don't recognise → skip
+      if (data.res === 'busy') {
+        // A previous long-poll is still held open on the camera side.
+        // Record getcurprop as the confirmed endpoint so we use 35s timeout
+        // next time, which will outlast the camera's 30s hold.
+        if (!session.statusEndpoint && epIsLongPoll) {
+          session.statusEndpoint = endpoint.split('?')[0];
+          console.log(`[${config.id}] Long-poll endpoint confirmed (busy): ${session.statusEndpoint} – waiting for camera to free slot…`);
+        }
+        // Do NOT mark disconnected – camera is reachable, just temporarily busy.
+        return;
+      }
+
+      // Any other non-ok result → skip this candidate
       if (data.res && data.res !== 'ok') {
-        console.log(`[${config.id}] ${endpoint} → unexpected res="${data.res}", trying next…`);
+        console.log(`[${config.id}] ${endpoint} → res="${data.res}", trying next…`);
         continue;
       }
 
       // ── Success ──────────────────────────────────────────────────────────────
-      // Record the base endpoint (strip query string so seq stays dynamic)
       if (!session._debugLogged) {
         session.statusEndpoint = endpoint.split('?')[0];
         console.log(`[${config.id}] Status endpoint: ${session.statusEndpoint}`);
@@ -205,32 +224,45 @@ async function fetchStatus(session) {
         session._debugLogged = true;
       }
 
-      // Update seq from camera's response if present, otherwise increment ours
+      // Advance seq using camera's value if provided
       if (data.seq != null) session.seq = Number(data.seq);
       else session.seq++;
 
-      // Flatten prop array or flat object into key→value map
+      // Flatten prop list or flat object
       const flat = {};
       if (Array.isArray(data.prop)) {
         data.prop.forEach(p => { if (p.k != null) flat[p.k] = p.v; });
       } else {
-        // Some firmware returns a flat object; copy everything except 'res'/'seq'
         Object.entries(data).forEach(([k, v]) => {
           if (k !== 'res' && k !== 'seq') flat[k] = v;
         });
       }
 
-      session.status    = flat;
+      if (epIsLongPoll && Object.keys(session.status).length > 0) {
+        // getcurprop returns delta (changed props only) – merge into existing status
+        Object.assign(session.status, flat);
+      } else {
+        // getprop or first response – replace entirely
+        session.status = flat;
+      }
+
       session.connected = true;
       broadcastStatus(config.id);
-      return; // success – don't try further candidates
+      return;
 
     } catch (err) {
+      if (epIsLongPoll && err.message && err.message.includes('timeout')) {
+        // Long-poll timed out on our side – camera had nothing to report.
+        // Advance seq so next request isn't treated as a duplicate.
+        session.seq++;
+        console.log(`[${config.id}] Long-poll timeout (no changes) – seq now ${session.seq}`);
+        return; // stay connected
+      }
       console.warn(`[${config.id}] Poll ${endpoint}: ${err.message}`);
     }
   }
 
-  // All candidates failed
+  // All candidates failed – genuinely unreachable
   session.connected = false;
   broadcastStatus(config.id);
 }
@@ -379,6 +411,62 @@ app.get('/api/rawstatus/:camId', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * GET /api/camfetch/:camId?path=/some/path
+ * Authenticated proxy – fetches any path from the camera as text.
+ * Used for API discovery: e.g. fetch camera JS to find real endpoint names.
+ */
+app.get('/api/camfetch/:camId', async (req, res) => {
+  const session = cameras.get(req.params.camId);
+  if (!session) return res.status(404).json({ error: 'Camera not found' });
+  const camPath = req.query.path;
+  if (!camPath) return res.status(400).json({ error: 'path query param required' });
+  try {
+    const r = await fetch(`${baseUrl(session.config)}${camPath}`, {
+      headers: cameraHeaders(session), timeout: 8000,
+    });
+    const text = await r.text();
+    res.set('Content-Type', 'text/plain').send(`HTTP ${r.status}\n\n${text}`);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/probe/:camId
+ * Tries a broad list of candidate status endpoints and reports what each returns.
+ */
+app.get('/api/probe/:camId', async (req, res) => {
+  const session = cameras.get(req.params.camId);
+  if (!session) return res.status(404).json({ error: 'Camera not found' });
+
+  const paths = [
+    '/api/cam/getprop', '/api/cam/getcurprop', '/api/cam/getallprop',
+    '/api/cam/prop',    '/api/cam/curprop',     '/api/cam/status',
+    '/api/cam/getstatus', '/api/cam/info',      '/api/cam/getinfo',
+    '/api/cam/getprop?seq=0', '/api/cam/getcurprop?seq=0',
+    '/api/cam/getprop?k=rec', '/api/cam/getcurprop?k=rec',
+    '/api/info',        '/api/status',          '/api/cam',
+    '/api/cam/getcurprop?propid=0', '/api/cam/getprop?propid=0',
+  ];
+
+  const results = [];
+  for (const p of paths) {
+    try {
+      const r = await fetch(`${baseUrl(session.config)}${p}`, {
+        headers: cameraHeaders(session), timeout: 4000,
+      });
+      const text = await r.text();
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { parsed = text.slice(0, 200); }
+      results.push({ path: p, status: r.status, body: parsed });
+    } catch (err) {
+      results.push({ path: p, error: err.message });
+    }
+  }
+  res.json(results);
 });
 
 /** GET /api/protocols – list supported protocols */
