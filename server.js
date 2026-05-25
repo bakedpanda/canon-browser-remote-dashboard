@@ -139,14 +139,18 @@ async function login(session) {
 async function fetchStatus(session) {
   const { config } = session;
 
-  // Endpoint candidates — tried in order until one succeeds
-  const candidates = session.statusEndpoint
-    ? [session.statusEndpoint]
+  // Build candidate list.
+  // Prefer getprop (returns immediately) over getcurprop (long-poll, can return "busy"
+  // if a previous request is still pending).  Store only the base path so the seq
+  // parameter can be appended dynamically each call.
+  const base = session.statusEndpoint; // e.g. '/api/cam/getprop' – no query string
+  const candidates = base
+    ? [`${base}?seq=${session.seq}`, base]
     : [
-        `/api/cam/getcurprop`,
-        `/api/cam/getcurprop?seq=${session.seq}`,
         `/api/cam/getprop`,
         `/api/cam/getprop?seq=${session.seq}`,
+        `/api/cam/getcurprop`,
+        `/api/cam/getcurprop?seq=${session.seq}`,
       ];
 
   for (const endpoint of candidates) {
@@ -154,7 +158,7 @@ async function fetchStatus(session) {
     try {
       const res = await fetch(url, {
         headers: cameraHeaders(session),
-        timeout: 4000,
+        timeout: 8000,
       });
 
       if (res.status === 401 || res.status === 403) {
@@ -162,6 +166,7 @@ async function fetchStatus(session) {
         session.connected = false;
         session.cookie    = null;
         session.statusEndpoint = null;
+        session._debugLogged   = false;
         await login(session);
         return;
       }
@@ -173,34 +178,50 @@ async function fetchStatus(session) {
         session.connected = false;
         session.cookie    = null;
         session.statusEndpoint = null;
+        session._debugLogged   = false;
         await login(session);
         return;
       }
 
-      if (data.res === 'failparam') {
-        console.log(`[${config.id}] ${endpoint} → failparam, trying next…`);
+      // 'busy' means a long-poll request is still in flight – skip this candidate.
+      // 'failparam' means wrong endpoint/params for this firmware.
+      if (data.res === 'busy' || data.res === 'failparam') {
+        if (data.res === 'failparam') console.log(`[${config.id}] ${endpoint} → failparam, trying next…`);
         continue;
       }
 
-      // First success — record which endpoint works for this camera
+      // Any non-ok result we don't recognise → skip
+      if (data.res && data.res !== 'ok') {
+        console.log(`[${config.id}] ${endpoint} → unexpected res="${data.res}", trying next…`);
+        continue;
+      }
+
+      // ── Success ──────────────────────────────────────────────────────────────
+      // Record the base endpoint (strip query string so seq stays dynamic)
       if (!session._debugLogged) {
-        session.statusEndpoint = endpoint;
-        console.log(`[${config.id}] Status endpoint: ${endpoint}`);
-        console.log(`[${config.id}] Raw sample:`, JSON.stringify(data).slice(0, 600));
+        session.statusEndpoint = endpoint.split('?')[0];
+        console.log(`[${config.id}] Status endpoint: ${session.statusEndpoint}`);
+        console.log(`[${config.id}] Raw sample:`, JSON.stringify(data).slice(0, 800));
         session._debugLogged = true;
       }
+
+      // Update seq from camera's response if present, otherwise increment ours
+      if (data.seq != null) session.seq = Number(data.seq);
+      else session.seq++;
 
       // Flatten prop array or flat object into key→value map
       const flat = {};
       if (Array.isArray(data.prop)) {
         data.prop.forEach(p => { if (p.k != null) flat[p.k] = p.v; });
-      } else if (typeof data === 'object') {
-        Object.assign(flat, data);
+      } else {
+        // Some firmware returns a flat object; copy everything except 'res'/'seq'
+        Object.entries(data).forEach(([k, v]) => {
+          if (k !== 'res' && k !== 'seq') flat[k] = v;
+        });
       }
 
       session.status    = flat;
       session.connected = true;
-      session.seq++;
       broadcastStatus(config.id);
       return; // success – don't try further candidates
 
@@ -225,19 +246,25 @@ async function sendCommand(session, cmd) {
 // ─── Polling lifecycle ────────────────────────────────────────────────────────
 
 async function startPolling(session) {
-  if (session.pollTimer) return;
-  session.polling = true;  // mark active BEFORE the delay so stopPolling() can cancel it
+  if (session.polling) return;
+  session.polling = true;
   // Brief delay so the camera session settles after login
   await new Promise(r => setTimeout(r, LOGIN_SETTLE_MS));
-  if (!session.polling) return; // disconnected while waiting
-  session.pollTimer = setInterval(() => fetchStatus(session), POLL_INTERVAL);
-  fetchStatus(session);
+
+  // Sequential poll loop – waits for each response before scheduling the next.
+  // This avoids "busy" errors that occur when a second request arrives while
+  // a long-poll (getcurprop) is still holding the connection open.
+  while (session.polling) {
+    await fetchStatus(session);
+    if (session.polling) {
+      await new Promise(r => setTimeout(r, POLL_INTERVAL));
+    }
+  }
 }
 
 function stopPolling(session) {
-  clearInterval(session.pollTimer);
-  session.pollTimer = null;
-  session.polling   = false;
+  session.polling   = false;  // causes the loop in startPolling to exit cleanly
+  session.pollTimer = null;   // kept for API compatibility (no longer an interval)
 }
 
 async function connectCamera(camId, config) {
