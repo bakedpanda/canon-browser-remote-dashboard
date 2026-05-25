@@ -4,17 +4,11 @@ services:
     image: canon-remote-dashboard
     container_name: canon-dashboard
     restart: unless-stopped
+    ports:
+      - "8847:8847"
     environment:
       - PORT=8847
-    # host networking lets the container reach cameras directly on your LAN.
-    # With this mode the server binds to the host's port 8847 directly —
-    # no ports: mapping needed.
-    # NOTE: network_mode: host works on Linux. On Docker Desktop (Mac/Windows)
-    # use the commented-out bridge block below instead.
-    network_mode: host
-
-    # ── Docker Desktop (Mac / Windows) alternative ──────────────
-    # Comment out network_mode above and uncomment these two lines:
-    # network_mode: bridge
-    # ports:
-    #   - "8847:8847"
+    # bridge works on Docker Desktop (Mac/Windows) — the Desktop VM
+    # routes LAN traffic so the container can reach camera IPs.
+    # On bare Linux Docker Engine, change to: network_mode: host
+    network_mode: bridge
