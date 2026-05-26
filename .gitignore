@@ -9,3 +9,6 @@ npm-debug.log*
 .idea/
 .vscode/
 dist/
+
+# Canon camera JS files (proprietary firmware, fetched for API research only)
+canon files/

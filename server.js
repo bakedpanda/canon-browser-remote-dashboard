@@ -83,15 +83,43 @@ function baseUrl(config) {
   return `http://${config.ip}`;
 }
 
+/**
+ * Headers for all post-login camera API calls.
+ * The camera's own Browser Remote JS never sends Authorization: Basic after login —
+ * it relies purely on the session cookie (acid).  Sending Basic Auth on
+ * /api/cam/* endpoints causes the camera to open a competing session that
+ * grabs the long-poll slot, making getcurprop always return 'busy'.
+ */
 function cameraHeaders(session, extra = {}) {
-  const { config } = session;
-  const cred = Buffer.from(`${config.username}:${config.password}`).toString('base64');
-  const h = { Authorization: `Basic ${cred}`, ...extra };
+  // Canon's own rccommon.js always sends If-Modified-Since on every request.
+  const h = { 'If-Modified-Since': 'Thu, 01 Jun 1970 00:00:00 GMT', ...extra };
   if (session.cookie) h.Cookie = session.cookie;
   return h;
 }
 
-/** Headers specifically for getcurprop – mirror what the browser sends */
+/**
+ * Deep-merge `source` into `target` in-place.
+ * Nested plain objects are merged recursively; scalars and arrays overwrite.
+ * This is needed for Canon's delta (getcurprop?seq=N) responses: the camera
+ * may send {Oisogaininfo:{Ovalue:{…}}} in one delta and {Oisogaininfo:{Omode:{…}}}
+ * in another.  A shallow Object.assign would replace the entire Oisogaininfo
+ * object, wiping out the sibling key that arrived in the previous delta.
+ */
+function deepMerge(target, source) {
+  for (const key of Object.keys(source)) {
+    const sv = source[key];
+    const tv = target[key];
+    if (sv && typeof sv === 'object' && !Array.isArray(sv) &&
+        tv && typeof tv === 'object' && !Array.isArray(tv)) {
+      deepMerge(tv, sv);
+    } else {
+      target[key] = sv;
+    }
+  }
+  return target;
+}
+
+/** Headers specifically for getcurprop – mirror exactly what the browser sends */
 function pollHeaders(session) {
   // Extract productId from cookie so we can build the correct Referer
   const productId = (session.cookie || '').match(/productId=([^;]+)/)?.[1] || '';
@@ -132,7 +160,44 @@ async function login(session) {
   const { config } = session;
   const basicAuth = `Basic ${Buffer.from(`${config.username}:${config.password}`).toString('base64')}`;
 
-  // Logout first to clear any competing session
+  // Step 0: Fetch camera root to discover the productId.
+  //
+  // The camera's Browser Remote sets productId (e.g. "VOAX00") and brlang ("0")
+  // via document.cookie in its own JavaScript — they do NOT appear in HTTP
+  // Set-Cookie headers, so an HTTP fetch alone won't capture them.
+  // However, the product ID string always appears in the HTML body as part of
+  // script paths like: /wpd/VOAX00/js/rc/common.js
+  // We parse it out and inject it into the session cookie ourselves.
+  try {
+    const rootRes = await fetch(`${baseUrl(config)}/`, {
+      redirect: 'follow',
+      timeout: 4000,
+    });
+    // Grab any HTTP Set-Cookie the camera may send (might be empty)
+    const httpCookies = extractCookies(rootRes);
+
+    // Parse productId from HTML body (e.g. src="/wpd/VOAX00/js/...")
+    const html = await rootRes.text().catch(() => '');
+    const wpdMatch = html.match(/\/wpd\/([A-Z0-9]+)\//);
+    const productId = wpdMatch?.[1] || '';
+
+    // Build the pre-session cookie string
+    const preCookies = [
+      httpCookies,
+      productId ? `productId=${productId}` : '',
+      'brlang=0',
+    ].filter(Boolean).join('; ');
+
+    if (preCookies) {
+      session.cookie = preCookies;
+      console.log(`[${config.id}] Pre-login cookies: ${session.cookie}`);
+    }
+  } catch (err) {
+    console.log(`[${config.id}] Root fetch skipped: ${err.message}`);
+  }
+
+  // Step 1: Logout to clear any stale session (use current cookie so the camera
+  // can identify which session to drop; pre-login cookies are harmless here)
   try {
     const h = { Authorization: basicAuth };
     if (session.cookie) h.Cookie = session.cookie;
@@ -140,18 +205,25 @@ async function login(session) {
     await new Promise(r => setTimeout(r, 400));
   } catch (_) {}
 
+  // Step 2: Login — send pre-session cookies so the camera associates the new
+  // session with the same productId/brlang values
   const url = `${baseUrl(config)}/api/acnt/login`
     + `?uname=${encodeURIComponent(config.username)}`
     + `&pw=${encodeURIComponent(config.password)}`;
 
   try {
-    const res = await fetch(url, { headers: { Authorization: basicAuth }, timeout: 5000 });
+    const loginHeaders = { Authorization: basicAuth };
+    if (session.cookie) loginHeaders.Cookie = session.cookie;
+    const res = await fetch(url, { headers: loginHeaders, timeout: 5000 });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const data = await res.json();
     if (data.res !== 'ok') throw new Error(`Login rejected: ${data.res}`);
 
-    session.cookie = extractCookies(res);
+    // Merge login cookies (acid, authlevel) ON TOP of pre-session cookies
+    // so the final cookie string has all four: productId + brlang + acid + authlevel
+    const loginCookies = extractCookies(res);
+    session.cookie = mergeCookies(session.cookie || '', loginCookies);
     session.connected = true;
     console.log(`[${config.id}] ✓ Logged in to ${config.ip} | cookie: ${session.cookie}`);
     return true;
@@ -277,14 +349,27 @@ async function fetchStatus(session) {
       }
 
       if (epIsLongPoll && Object.keys(session.status).length > 0) {
-        // getcurprop returns delta (changed props only) – merge into existing status
-        Object.assign(session.status, flat);
+        // getcurprop returns delta (changed props only) – deep-merge into existing status.
+        // Deep merge is required: the camera may send {Oisogaininfo:{Ovalue:{…}}} in one
+        // delta and {Oisogaininfo:{Omode:{…}}} in another.  A shallow merge would
+        // replace the entire Oisogaininfo object, destroying the sibling key.
+        deepMerge(session.status, flat);
       } else {
         // getprop or first response – replace entirely
         session.status = flat;
       }
 
       session.connected = true;
+
+      // Log gain/iris mode changes to help debug AGC/auto-iris toggle issues.
+      const _gm = session.status.Oisogaininfo?.Omode?.pv;
+      const _im = session.status.Oirisinfo?.Omode?.pv;
+      if (_gm !== session._logGainMode || _im !== session._logIrisMode) {
+        console.log(`[${config.id}] modes: gain=${_gm} iris=${_im}`);
+        session._logGainMode = _gm;
+        session._logIrisMode = _im;
+      }
+
       broadcastStatus(config.id);
       return;
 
@@ -310,7 +395,9 @@ async function sendCommand(session, cmd) {
   const url = `${baseUrl(session.config)}/api/cam/${cmd}`;
   const res = await fetch(url, { headers: cameraHeaders(session), timeout: 5000 });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const body = await res.json();
+  console.log(`[${session.config.id}] CMD ${cmd} → ${JSON.stringify(body)}`);
+  return body;
 }
 
 // ─── Polling lifecycle ────────────────────────────────────────────────────────
@@ -597,3 +684,36 @@ server.listen(PORT, () => {
   console.log(`Canon Remote Dashboard  →  http://localhost:${PORT}`);
   console.log(`Companion API           →  http://localhost:${PORT}/companion/`);
 });
+
+// ─── mDNS: respond to cameracontrol.local queries ────────────────────────────
+// Works when running Node directly on macOS/Linux (native multicast access).
+// Docker on macOS (bridge mode): multicast doesn't cross the VM boundary —
+//   workaround: set your Mac's Local Hostname to "cameracontrol" in
+//   System Settings → General → Sharing → Local Hostname.
+// Docker on Linux with network_mode: host: works fine.
+try {
+  const mdns = require('multicast-dns')();
+  const os   = require('os');
+  const getLocalIP = () => {
+    for (const ifaces of Object.values(os.networkInterfaces()))
+      for (const iface of ifaces)
+        if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+    return null;
+  };
+  const ip = getLocalIP();
+  if (ip) {
+    mdns.on('query', query => {
+      for (const q of query.questions) {
+        if ((q.name === 'cameracontrol.local' || q.name === 'cameracontrol') &&
+            (q.type === 'A' || q.type === 'ANY')) {
+          mdns.respond({
+            answers: [{ name: 'cameracontrol.local', type: 'A', ttl: 120, data: ip }],
+          });
+        }
+      }
+    });
+    console.log(`[mDNS]  cameracontrol.local → ${ip}:${PORT}`);
+  }
+} catch (_) {
+  console.warn('[mDNS]  multicast-dns not installed — run: npm install multicast-dns');
+}

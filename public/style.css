@@ -31,7 +31,7 @@
   --toggle-on-bg:  #f0f0f8;
   --toggle-on-fg:  #0c0c0f;
 
-  --hdr-height:    52px;
+  --hdr-height:    80px;
   --panel-hdr-h:   38px;
 }
 
@@ -53,10 +53,10 @@ html, body {
 /* ─── App header ─────────────────────────────────────────────── */
 .app-header {
   height: var(--hdr-height);
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px;
+  padding: 0 16px;
   background: var(--bg-panel-hdr);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -64,132 +64,89 @@ html, body {
 
 .app-title {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-  font-size: 14px;
+  flex-direction: column;
+  line-height: 1.25;
+  font-size: 13px;
+  font-weight: 700;
   letter-spacing: 0.02em;
-  white-space: nowrap;
   color: var(--text-primary);
-}
-
-.logo-icon {
-  width: 22px;
-  height: 22px;
-  flex-shrink: 0;
-  opacity: 0.8;
 }
 
 /* REC ALL button */
 .btn-rec-all {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  background: var(--red-dim);
-  border: 1px solid var(--red);
-  border-radius: 5px;
-  color: #fff;
-  font-size: 12px;
+  justify-content: center;
+  width: 100px;
+  height: 58px;
+  border-radius: var(--radius, 5px);
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.06em;
+  background: var(--red);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: #fff;
   transition: background 0.15s, box-shadow 0.15s;
-  flex-shrink: 0;
 }
-.btn-rec-all:hover  { background: var(--red); box-shadow: 0 0 10px rgba(229,56,59,.4); }
-.btn-rec-all:active { background: #c0282b; }
+.btn-rec-all:hover  { background: #c0282b; box-shadow: 0 0 10px rgba(229,56,59,.5); }
+.btn-rec-all:active { background: #a01e21; }
+
+/* All cameras recording → flip to STOP ALL style (matches per-camera STOP button) */
+.btn-rec-all.is-recording {
+  background: rgba(229, 56, 59, 0.15);
+  border-color: rgba(229, 56, 59, 0.5);
+  color: var(--red);
+}
+.btn-rec-all.is-recording:hover {
+  background: rgba(229, 56, 59, 0.22);
+  box-shadow: 0 0 10px rgba(229, 56, 59, 0.3);
+}
+.btn-rec-all.is-recording:active { background: rgba(229, 56, 59, 0.3); }
+.btn-rec-all.is-recording .rec-all-dot { background: var(--red); opacity: 1; }
 
 .rec-all-dot {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: var(--red);
-  box-shadow: 0 0 5px var(--red);
+  background: #fff;
+  opacity: 0.9;
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
 /* Header camera indicator chips */
-.cam-rec-indicators {
+.top-bar-right {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
-  flex: 1;
-  overflow: hidden;
 }
 
-.hdr-cam {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: #1e1e26;
-  min-width: 0;
-}
-
-.hdr-cam.hdr-rec  { border-color: var(--red);   background: #1e1010; }
-.hdr-cam.hdr-live { border-color: var(--green);  background: #0e1a12; }
-.hdr-cam.hdr-off  { border-color: var(--border); background: #1a1a22; }
-
-.hdr-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.hdr-rec  .hdr-dot { background: var(--red);   animation: pulse-dot 0.8s ease-in-out infinite; }
-.hdr-live .hdr-dot { background: var(--green); }
-.hdr-off  .hdr-dot { background: var(--text-dim); }
-
-.hdr-info {
+.hdr-chip {
   display: flex;
   flex-direction: column;
-  min-width: 0;
-}
-
-.hdr-label {
-  font-size: 10px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-primary);
-}
-
-.hdr-status {
-  font-size: 10px;
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.hdr-rec  .hdr-status { color: var(--red); }
-.hdr-live .hdr-status { color: var(--green); }
-
-.hdr-remain {
-  font-size: 10px;
-  font-weight: 600;
-}
-.hdr-remain.remain-warning  { color: var(--amber); }
-.hdr-remain.remain-critical { color: var(--red); animation: blink-text 0.7s step-end infinite; }
-
-/* Layout toggle button */
-.hdr-btn {
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  border: 1px solid var(--btn-border);
-  background: var(--btn-bg);
-  color: var(--text-secondary);
-  transition: background 0.15s, color 0.15s;
+  gap: 5px;
+  width: 100px;
+  height: 58px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  flex-shrink: 0;
 }
-.hdr-btn svg { width: 16px; height: 16px; }
-.hdr-btn:hover { background: var(--btn-hover); color: var(--text-primary); }
+.hdr-chip.hdr-rec  { background: rgba(229,56,59,0.18); border-color: rgba(229,56,59,0.45); animation: pulse-border 1.4s ease-in-out infinite; }
+.hdr-chip.hdr-live { background: rgba(52,199,89,0.10); border-color: rgba(52,199,89,0.3); }
+.hdr-chip.hdr-off  { background: rgba(255,255,255,0.03); border-color: var(--border); }
+
+@keyframes pulse-border {
+  0%, 100% { box-shadow: 0 0 14px rgba(229,56,59,0.12); border-color: rgba(229,56,59,0.45); }
+  50%       { box-shadow: 0 0 20px rgba(229,56,59,0.28); border-color: rgba(229,56,59,0.7); }
+}
+
+.hdr-chip-name { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
+.hdr-chip-time { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; font-family: 'SF Mono', 'Fira Code', monospace; color: var(--text-secondary); }
+.hdr-rec  .hdr-chip-time { color: #ff7070; }
+.hdr-live .hdr-chip-time,
+.hdr-off  .hdr-chip-time { color: var(--text-dim); }
 
 /* ─── Camera grid ────────────────────────────────────────────── */
 .grid {
@@ -286,6 +243,18 @@ html, body {
 .status-dot.disconnected { background: var(--text-dim); }
 .status-dot.connecting   { background: var(--amber); animation: pulse-dot 0.7s ease-in-out infinite; }
 
+/* Connection button (replaces gear) */
+.btn-connection {
+  padding: 5px 12px;
+  background: transparent;
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.btn-connection:hover { background: var(--btn-bg); color: var(--text-primary); border-color: var(--blue); }
+
 /* Settings gear button */
 .btn-icon {
   width: 26px;
@@ -310,6 +279,8 @@ html, body {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ─── Disconnected / placeholder state ───────────────────────── */
@@ -323,131 +294,123 @@ html, body {
   color: var(--text-dim);
 }
 
-.cam-placeholder svg {
-  width: 40px;
-  height: 40px;
-  opacity: 0.35;
-}
-
 .cam-placeholder p {
   font-size: 12px;
   color: var(--text-secondary);
 }
 
-/* ─── Two-column connected layout ────────────────────────────── */
-.cam-layout {
-  display: flex;
-  height: 100%;
-  overflow: hidden;
-}
-
-.cam-col-left {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding: 8px;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
-  border-right: 1px solid var(--border);
-}
-
-.cam-col-right {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  padding: 8px;
-  gap: 4px;
-  min-width: 0;
-  overflow: hidden;
-  background: var(--bg-col-r);
-}
-
-/* ─── REC + TC block ─────────────────────────────────────────── */
-.rec-tc-block {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+/* Connecting spinner */
+.connecting-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
   flex-shrink: 0;
 }
 
-/* Large REC button */
-.btn-rec-big {
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── Grid panel layout ──────────────────────────────────────── */
+.panel-body {
+  display: grid;
+  grid-template-columns: 55% 45%;
+  grid-template-rows: 1fr 1fr auto;
+  grid-template-areas:
+    "rec   exp"
+    "focus exp"
+    "zoom  zoom";
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.panel-section {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.section-rec   { grid-area: rec;   border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); min-height: 0; }
+.section-exp   { grid-area: exp;   border-left: 1px solid var(--border); overflow: hidden; container-type: size; container-name: exp-panel; }
+.section-focus { grid-area: focus; border-right: 1px solid var(--border); border-top: 0; min-height: 0; }
+.section-zoom  { grid-area: zoom; border-top: 1px solid var(--border); }
+
+/* ─── Section label ──────────────────────────────────────────── */
+.section-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ─── Recording section ──────────────────────────────────────── */
+.rec-layout { display: flex; align-items: stretch; gap: 8px; flex: 1; min-height: 0; }
+.rec-info   { display: flex; flex-direction: column; flex: 1; gap: 5px; min-height: 0; min-width: 90px; overflow: hidden; }
+
+/* Large REC button — square, fills full section height */
+.btn-rec {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  align-self: stretch;
+  aspect-ratio: 1;
+  min-width: 50px;
+  max-width: calc(100% - 90px); /* always leave ≥90px for rec-info beside it */
+  padding: 0;
+  background: #2a2a2e;
+  border: 1px solid var(--btn-border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  user-select: none;
+}
+.btn-rec:hover  { background: var(--btn-hover); }
+.btn-rec:active { background: var(--btn-active); }
+
+.btn-rec.is-recording {
+  background: rgba(229,56,59,0.15);
+  border-color: rgba(229,56,59,0.5);
+  color: var(--red);
+}
+.btn-rec.is-recording:hover { background: rgba(229,56,59,0.22); }
+
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #444; }
+.is-recording .rec-dot { background: var(--red); animation: pulse-dot 1s ease-in-out infinite; }
+
+.rec-time-block {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  width: 64px;
-  min-height: 56px;
-  border-radius: 6px;
-  border: 2px solid var(--red-dim);
-  background: #1a1010;
-  color: var(--red);
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  flex-shrink: 0;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-  user-select: none;
-}
-.btn-rec-big:hover {
-  background: #221414;
-  border-color: var(--red);
-  box-shadow: 0 0 8px rgba(229, 56, 59, 0.3);
-}
-.btn-rec-big:active { background: #2a1818; }
-
-.btn-rec-big.is-recording {
-  background: var(--red);
-  border-color: #ff6b6e;
-  color: #fff;
-  box-shadow: 0 0 14px rgba(229, 56, 59, 0.6);
-}
-.btn-rec-big.is-recording .rec-big-dot {
-  animation: pulse-dot 0.7s ease-in-out infinite;
-}
-
-.rec-big-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-/* TC and slot area */
-.tc-remain-block {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
   gap: 3px;
-  min-width: 0;
+  flex: 1;
+  min-height: 0;
+  background: #0a0a0d;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 4px;
+  overflow: hidden;
 }
+.remain-label { font-size: 8px; color: var(--text-secondary); text-align: center; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
+.remain-total { font-size: 22px; font-weight: 700; text-align: center; line-height: 1; font-family: 'SF Mono', 'Fira Code', monospace; }
+.remain-block { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
 
-.tc-primary {
-  font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--text-primary);
-  white-space: nowrap;
-  line-height: 1.1;
-}
-
-.tc-secondary {
-  font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
-  font-size: 11px;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-.remain-header {
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
-  margin-top: 2px;
-}
+.slot-block { display: flex; flex-direction: column; gap: 4px; }
+.btn-slot-select { width: 100%; text-align: center; }
 
 .slot-list {
   display: flex;
@@ -455,20 +418,36 @@ html, body {
   gap: 2px;
 }
 
+/* Slot card rows — three-state styling:
+   default = card present, not active → white border
+   .slot-active = card present + recording/selected → green
+   .slot-absent = no card inserted → very dim, dark border  */
 .slot-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
-  padding: 2px 5px;
-  border-radius: 3px;
-  border: 1px solid transparent;
+  padding: 4px 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.04);
   font-size: 10px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .slot-row.slot-active {
-  background: #0e2010;
-  border-color: var(--green-dim);
+  background: rgba(34, 197, 94, 0.15);
+  border-color: var(--green);
   color: var(--green);
+}
+
+.slot-row.slot-absent {
+  border-color: rgba(255,255,255,0.07);
+  background: rgba(255,255,255,0.01);
+  color: var(--text-dim);
+  font-weight: 400;
+  font-style: italic;
 }
 
 .slot-lbl {
@@ -481,6 +460,8 @@ html, body {
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 10px;
   color: inherit;
+  min-width: 52px;   /* fits "999 mins" */
+  text-align: right;
 }
 
 .remain-countdown {
@@ -502,6 +483,11 @@ html, body {
   animation: blink-text 0.7s step-end infinite;
 }
 
+/* ─── Focus section fill-height ─────────────────────────────── */
+.section-focus .ctrl-btn-row { flex: 1; }
+.section-focus .btn-ctrl,
+.section-focus .btn-toggle   { flex: 1; height: auto; }
+
 /* ─── Control lines (Focus / Zoom) ───────────────────────────── */
 .ctrl-line {
   display: flex;
@@ -518,6 +504,258 @@ html, body {
   color: var(--text-dim);
   min-width: 32px;
   flex-shrink: 0;
+}
+
+/* ─── Control sections (Focus / Zoom with label + button groups) ── */
+.ctrl-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.ctrl-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.ctrl-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.ctrl-btn-group .btn {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ─── Zoom section ───────────────────────────────────────────── */
+.section-zoom { flex-direction: column; gap: 6px; }
+.btn-zoom-step.is-active { background: rgba(74,144,226,0.2); border-color: rgba(74,144,226,0.5); color: var(--blue); }
+.zoom-wide, .zoom-tele { flex: 1; }
+
+/* ─── Zoom position bar ──────────────────────────────────────── */
+.zoom-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zoom-bar-track {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.zoom-bar-fill {
+  height: 100%;
+  background: var(--blue);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  min-width: 2px;
+}
+
+.zoom-val {
+  font-size: 10px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  min-width: 28px;
+  text-align: right;
+}
+
+/* ─── Camera info bar (bottom strip) ────────────────────────── */
+.cam-info-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: var(--bg-panel-hdr);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.batt-block { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.info-pills { display: flex; gap: 5px; flex: 1; flex-wrap: wrap; }
+.info-pill  { font-size: 10px; color: var(--text-secondary); background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 3px; padding: 2px 7px; }
+.panel-footer-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto; }
+.btn-disc { height: 24px; padding: 0 12px; background: transparent; border: 1px solid var(--btn-border); border-radius: 4px; color: var(--text-dim); font-size: 11px; font-weight: 600; }
+.btn-disc:hover { border-color: var(--red); color: var(--red); }
+
+/* Lock button */
+.btn-lock { height: 24px; width: 28px; padding: 0; background: transparent; border: 1px solid var(--btn-border); border-radius: 4px; font-size: 13px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.15s, background 0.15s; }
+.btn-lock:hover { border-color: var(--amber); }
+.btn-lock.is-locked { border-color: var(--amber); background: rgba(251,191,36,0.12); }
+
+/* ── No-zoom layout (manual zoom lens cameras) ────────────────── */
+/* When Ozoom is absent the zoom section is not rendered; remove that row from the grid */
+.panel-body.no-zoom {
+  grid-template-rows: 1fr 1fr;
+  grid-template-areas:
+    "rec   exp"
+    "focus exp";
+}
+
+/* ── Unavailable controls ──────────────────────────────────────── */
+/* Camera's adjen=0 means the control can't be nudged remotely; dim it and block clicks */
+.nudge-pair.unavailable,
+.btn-toggle.unavailable,
+.btn-ctrl.unavailable { opacity: 0.25; pointer-events: none; }
+
+/* ── Panel lock state ─────────────────────────────────────────── */
+/* Rec section stays fully interactive; exp/focus/zoom are dimmed and blocked */
+.panel-locked .section-exp,
+.panel-locked .section-focus,
+.panel-locked .section-zoom { opacity: 0.2; pointer-events: none; }
+/* Also dim the Full Auto toggle in the footer */
+.panel-locked .panel-footer-right .btn-toggle { opacity: 0.2; pointer-events: none; }
+
+/* ─── Battery bar ────────────────────────────────────────────── */
+.batt-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 0 5px;
+  flex-shrink: 0;
+}
+
+.batt-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.batt-track {
+  flex: 1;
+  height: 5px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.batt-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+
+.batt-fill.batt-warning  { background: var(--amber); }
+.batt-fill.batt-critical { background: var(--red); animation: blink-text 1s step-end infinite; }
+
+.batt-pct {
+  font-size: 10px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  min-width: 30px;
+  text-align: right;
+}
+
+.batt-rem {
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ─── Shutter mode toggle label-button ───────────────────────── */
+.exp-lbl-btn {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  min-width: 34px;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+  text-align: center;
+  cursor: pointer;
+}
+
+.exp-lbl-btn:hover {
+  background: var(--btn-hover);
+  color: var(--text-primary);
+  border-color: var(--btn-border);
+}
+
+.exp-lbl-btn:active {
+  background: var(--btn-active);
+}
+
+.exp-lbl-btn.disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* ─── Inline button group (WB mode selector, etc.) ──────────── */
+.btn-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* Disabled button — greyed out, no interaction */
+.btn.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+  cursor: default;
+}
+
+/* wb-preset-val kept for backward compat — now uses exp-val instead */
+.wb-preset-val {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding-left: 6px;
+  display: flex;
+  align-items: center;
+  background: #0a0a0d;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 8px;
+}
+
+/* ─── Info grid (key/value pairs in cam-info-box) ────────────── */
+.info-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-items: baseline;
+}
+
+.info-k {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.info-v {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.info-alert {
+  color: var(--amber);
 }
 
 /* ─── Camera info box ────────────────────────────────────────── */
@@ -555,13 +793,10 @@ html, body {
 .exp-row {
   flex: 1;
   display: flex;
-  align-items: center;
+  align-items: stretch;   /* children fill row height */
   gap: 5px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 4px;
-  min-height: 0;
+  min-height: 0;          /* let rows shrink freely for scaling */
 }
-.exp-row:last-child { border-bottom: none; padding-bottom: 0; }
 
 .exp-lbl {
   font-size: 10px;
@@ -569,15 +804,72 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-secondary);
-  min-width: 28px;
+  width: 54px;        /* wide enough for "SHUTTER"; WB-A/B have extra whitespace */
+  padding-right: 4px; /* breathing room between label and first button/container */
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
 
 .nudge-pair {
   display: flex;
   gap: 2px;
   flex-shrink: 0;
+  /* Dark container — visually groups the −/+ pair */
+  background: #0a0a0d;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+  flex: 0 1 22%;
+  min-width: 72px;
 }
+
+/* Buttons inside nudge-pair: transparent so container bg shows */
+.nudge-pair .btn {
+  flex: 1;
+  min-width: 30px;
+  padding: 0;
+  justify-content: center;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 4px;
+}
+.nudge-pair .btn:hover  { background: var(--btn-hover); border-color: transparent; }
+.nudge-pair .btn:active { background: var(--btn-active); }
+
+/* All btn-xs in exp section: sensible minimum width */
+.section-exp .btn-xs {
+  min-width: 34px;
+  padding-left: 4px;
+  padding-right: 4px;
+  justify-content: center;
+}
+
+/* Button groups in exp rows: dark container matching nudge-pair */
+.exp-row .btn-group {
+  align-items: stretch;
+  background: #0a0a0d;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+.exp-row .btn-group .btn {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 4px;
+  min-width: 34px;
+  padding: 0 6px;
+  justify-content: center;
+}
+.exp-row .btn-group .btn:hover  { background: var(--btn-hover); border-color: transparent; }
+.exp-row .btn-group .btn:active { background: var(--btn-active); }
+.exp-row .btn-group .btn.is-active {
+  background: var(--toggle-on-bg);
+  color: var(--toggle-on-fg);
+  border-color: transparent;
+}
+.exp-row .btn-group .btn.is-active:hover { background: #d8d8e8; }
 
 .exp-val {
   flex: 1;
@@ -585,11 +877,22 @@ html, body {
   font-weight: 700;
   font-family: 'SF Mono', 'Fira Code', monospace;
   color: var(--text-primary);
-  text-align: right;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  /* Dark field — groups value display visually */
+  background: #0a0a0d;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 8px;
+  min-width: 0;
 }
+
+/* section-sublabel kept as dead rule — element removed from HTML */
+.section-sublabel { display: none; }
 
 /* Right footer row */
 .right-footer {
@@ -603,6 +906,27 @@ html, body {
 }
 
 .flex-1 { flex: 1; }
+
+/* ─── New layout helpers ─────────────────────────────────────── */
+.btn-row-group { display: flex; gap: 3px; }
+.btn-xs-action { height: 22px; padding: 0 7px; background: var(--btn-bg); border: 1px solid var(--btn-border); border-radius: 4px; color: var(--text-secondary); font-size: 10px; font-weight: 600; cursor: pointer; }
+.btn-xs-action.btn-disabled { opacity: 0.28; pointer-events: none; }
+.btn-wide { flex: 1; }
+.ctrl-btn-row { display: flex; gap: 3px; }
+
+.btn-ctrl {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-ctrl:hover { background: var(--btn-hover); }
 
 /* ─── Button base ────────────────────────────────────────────── */
 .btn {
@@ -825,19 +1149,76 @@ html, body {
 
 /* ─── Responsive tweaks ──────────────────────────────────────── */
 @media (max-width: 900px) {
-  :root { --hdr-height: 48px; }
-  .app-title { font-size: 13px; }
-  .tc-primary { font-size: 15px; }
-  .btn-rec-big { width: 56px; min-height: 50px; font-size: 12px; }
+  .app-title { font-size: 12px; }
+
+  /* Header: flex row — REC ALL sits naturally, no forced centre */
+  .app-header {
+    display: flex;
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 60px;
+    padding: 10px 12px;
+    gap: 8px;
+    align-items: center;
+  }
+
+  /* Allow the page to scroll; grid stacks all panels single column */
+  html, body {
+    overflow: auto;
+    height: auto;
+  }
+
+  .grid {
+    height: auto;
+    overflow: visible;
+  }
+
+  /* All data-active variants collapse to 1 × N */
+  .grid[data-active="1"],
+  .grid[data-active="2"],
+  .grid[data-active="3"],
+  .grid[data-active="4"] {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+
+  /* Keep the existing hide rules for 1/2/3 modes intact */
+  .grid[data-active="1"] .cam-panel:not(:nth-child(1)) { display: none; }
+  .grid[data-active="2"] .cam-panel:not(:nth-child(-n+2)) { display: none; }
+  .grid[data-active="3"] .cam-panel:not(:nth-child(-n+3)) { display: none; }
+
+  /* Each panel gets a comfortable minimum height when stacked */
+  .cam-panel { min-height: 520px; }
 }
 
-@media (max-width: 640px) {
-  .grid[data-active="4"],
-  .grid[data-active="3"],
-  .grid[data-active="2"] {
-    grid-template-columns: 1fr;
-    grid-template-rows: repeat(4, 1fr);
+/* ─── Exposure panel: scale down when viewport is short ─────── */
+/* section-exp height ≈ (vh - 238). Breakpoints chosen so rows fit. */
+
+/* Moderately short — viewport < 760px → section-exp < ~520px */
+@media (max-height: 760px) {
+  .section-exp {
+    gap: 3px;
+    padding: 6px 10px;
   }
-  .grid[data-active="2"] { grid-template-rows: repeat(2, 1fr); }
-  .grid[data-active="3"] { grid-template-rows: repeat(3, 1fr); }
+  .section-exp .section-label { padding-bottom: 3px; margin-bottom: 2px; }
+  .section-exp .exp-lbl       { font-size: 9px; width: 46px; letter-spacing: 0.02em; }
+  .section-exp .exp-val       { font-size: 10px; padding: 0 5px; }
+  .section-exp .nudge-pair    { min-width: 60px; padding: 1px; gap: 1px; }
+  .section-exp .nudge-pair .btn { min-width: 26px; font-size: 10px; }
+  .section-exp .exp-row .btn-group { padding: 1px; gap: 1px; }
+  .section-exp .exp-row .btn-group .btn { min-width: 28px; font-size: 10px; padding: 0 4px; }
+}
+
+/* Short — viewport < 620px → section-exp < ~380px */
+@media (max-height: 620px) {
+  .section-exp {
+    gap: 2px;
+    padding: 4px 8px;
+  }
+  .section-exp .section-label { font-size: 7px; padding-bottom: 2px; margin-bottom: 1px; }
+  .section-exp .exp-lbl       { font-size: 8px; width: 36px; letter-spacing: 0; padding-right: 2px; }
+  .section-exp .exp-val       { font-size: 9px; padding: 0 4px; }
+  .section-exp .nudge-pair    { min-width: 50px; }
+  .section-exp .nudge-pair .btn { min-width: 22px; font-size: 9px; }
+  .section-exp .exp-row .btn-group .btn { min-width: 22px; font-size: 9px; padding: 0 3px; }
 }
